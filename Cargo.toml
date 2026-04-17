@@ -1,11 +1,11 @@
 [package]
-name = "model-converter"
+name = "pt-loader"
 version = "0.1.0"
 edition = "2021"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 
 [lib]
-name = "model_converter"
+name = "pt_loader"
 crate-type = ["rlib", "cdylib"]
 
 [features]

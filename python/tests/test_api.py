@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-mc = pytest.importorskip("model_converter")
+mc = pytest.importorskip("pt_loader")
 np = pytest.importorskip("numpy")
 
 

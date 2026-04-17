@@ -17,6 +17,6 @@ dist/
 uv.lock
 
 # Local maturin-built extension artifacts
-python/model_converter/_core*.so
-python/model_converter/_core*.dylib
-python/model_converter/_core*.pyd
+python/pt_loader/_core*.so
+python/pt_loader/_core*.dylib
+python/pt_loader/_core*.pyd

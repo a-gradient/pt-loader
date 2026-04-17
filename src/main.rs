@@ -1,4 +1,4 @@
-use model_converter::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
+use pt_loader::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
 use std::env;
 use std::path::PathBuf;
 
@@ -64,6 +64,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn print_usage() {
   eprintln!("Usage:");
-  eprintln!("  model-converter inspect <input.pt>");
-  eprintln!("  model-converter convert <input.pt> [--out-dir <dir>]");
+  eprintln!("  pt-loader inspect <input.pt>");
+  eprintln!("  pt-loader convert <input.pt> [--out-dir <dir>]");
 }

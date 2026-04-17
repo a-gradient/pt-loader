@@ -1,4 +1,4 @@
-use model_converter::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
+use pt_loader::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

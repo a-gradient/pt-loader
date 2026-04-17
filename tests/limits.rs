@@ -1,4 +1,4 @@
-use model_converter::{convert_pt_to_safetensors, ConvertOptions};
+use pt_loader::{convert_pt_to_safetensors, ConvertOptions};
 use std::fs::File;
 use std::io::Write;
 use tempfile::tempdir;

@@ -35,7 +35,7 @@ pub(crate) fn write_safetensors(
     json!({
       "format_version": "1",
       "source_sha256": source_sha256,
-      "converter": "model-converter",
+      "converter": "pt-loader",
     }),
   );
 

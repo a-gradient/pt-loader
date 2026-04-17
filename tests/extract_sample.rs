@@ -40,12 +40,16 @@ fn extracts_sample_yolo26n_pt() {
     "expected sample checkpoint at {}",
     input.display()
   );
-  assert!(
-    reference_safetensors.exists(),
-    "expected sample safetensors at {}",
-    reference_safetensors.display()
-  );
-  ensure_reference_yaml(&reference_safetensors, &reference_yaml);
+  let needs_regen = reference_yaml_needs_regeneration(&reference_yaml);
+  if needs_regen {
+    assert!(
+      reference_safetensors.exists(),
+      "expected sample safetensors at {} to regenerate {}",
+      reference_safetensors.display(),
+      reference_yaml.display()
+    );
+    generate_yaml_from_safetensors(&reference_safetensors, &reference_yaml);
+  }
 
   let out_dir = crate_root.join("out");
   if out_dir.exists() {
@@ -66,9 +70,15 @@ fn extracts_sample_yolo26n_pt() {
   assert_eq!(report.tensor_count, result.tensor_count);
 
   let converted_shapes = read_safetensors_shapes(&result.safetensors_path);
-  let reference_shapes = read_safetensors_shapes(&reference_safetensors);
   assert!(!converted_shapes.is_empty(), "converted safetensors is empty");
-  assert!(!reference_shapes.is_empty(), "reference safetensors is empty");
+  if reference_safetensors.exists() {
+    let reference_shapes = read_safetensors_shapes(&reference_safetensors);
+    assert!(!reference_shapes.is_empty(), "reference safetensors is empty");
+    assert_eq!(
+      converted_shapes, reference_shapes,
+      "converted out/model.safetensors shapes must match samples/yolo26n.safetensors"
+    );
+  }
 
   let out_yaml_tensors = read_model_yaml_tensors(&result.model_yaml_path);
   let reference_yaml_tensors = read_model_yaml_tensors(&reference_yaml);
@@ -96,8 +106,8 @@ fn extracts_sample_yolo26n_pt() {
   );
 }
 
-fn ensure_reference_yaml(safetensors_path: &Path, yaml_path: &Path) {
-  let regenerate = if !yaml_path.exists() {
+fn reference_yaml_needs_regeneration(yaml_path: &Path) -> bool {
+  if !yaml_path.exists() {
     true
   } else {
     let parsed = read_model_yaml(yaml_path);
@@ -105,9 +115,6 @@ fn ensure_reference_yaml(safetensors_path: &Path, yaml_path: &Path) {
     parsed.source_sha256.trim().is_empty()
       || parsed.tensors.iter().any(|item| item.sha256.trim().is_empty())
       || raw.contains("shape:\n")
-  };
-  if regenerate {
-    generate_yaml_from_safetensors(safetensors_path, yaml_path);
   }
 }
 

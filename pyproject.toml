@@ -6,8 +6,19 @@ build-backend = "maturin"
 name = "pt-loader"
 version = "0.1.0"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
+readme = "README.md"
 requires-python = ">=3.8"
 dependencies = ["numpy>=1.24"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/a-gradient/pt-loader"
+Repository = "https://github.com/a-gradient/pt-loader"
+Issues = "https://github.com/a-gradient/pt-loader/issues"
 
 [tool.maturin]
 features = ["pyo3"]

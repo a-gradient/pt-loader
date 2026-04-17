@@ -161,10 +161,10 @@ pub struct TensorRef {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TensorData {
-  pub(crate) dtype: DType,
-  pub(crate) shape: Vec<usize>,
-  pub(crate) bytes: Vec<u8>,
+pub struct TensorData {
+  pub dtype: DType,
+  pub shape: Vec<usize>,
+  pub bytes: Vec<u8>,
 }
 
 #[allow(dead_code)]
@@ -223,10 +223,10 @@ impl Value {
   }
 }
 
-pub(crate) struct ParsedCheckpoint {
-  pub(crate) source_sha256: String,
-  pub(crate) warnings: Vec<String>,
-  pub(crate) tensors: BTreeMap<String, TensorData>,
-  pub(crate) metadata: serde_yaml::Value,
-  pub(crate) objects: Vec<String>,
+pub struct ParsedCheckpoint {
+  pub source_sha256: String,
+  pub warnings: Vec<String>,
+  pub tensors: BTreeMap<String, TensorData>,
+  pub metadata: serde_yaml::Value,
+  pub objects: Vec<String>,
 }

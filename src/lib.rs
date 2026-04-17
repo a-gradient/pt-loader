@@ -97,7 +97,7 @@ pub fn convert_pt_to_safetensors(
   })
 }
 
-fn parse_checkpoint(path: &Path, opts: &ConvertOptions) -> Result<ParsedCheckpoint> {
+pub fn parse_checkpoint(path: &Path, opts: &ConvertOptions) -> Result<ParsedCheckpoint> {
   let file = File::open(path)?;
   let metadata = file.metadata()?;
   if metadata.len() > opts.max_archive_bytes {

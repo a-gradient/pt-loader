@@ -7,7 +7,14 @@ name = "model-converter"
 version = "0.1.0"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 requires-python = ">=3.8"
+dependencies = ["numpy>=1.24"]
 
 [tool.maturin]
 features = ["pyo3"]
-module-name = "model_converter"
+module-name = "model_converter._core"
+python-source = "python"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]

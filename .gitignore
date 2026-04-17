@@ -2,3 +2,21 @@
 /target/
 /out
 *.safetensors
+
+# Python and packaging artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+uv.lock
+
+# Local maturin-built extension artifacts
+python/model_converter/_core*.so
+python/model_converter/_core*.dylib
+python/model_converter/_core*.pyd

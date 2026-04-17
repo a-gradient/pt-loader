@@ -4,12 +4,21 @@ version = "0.1.0"
 edition = "2021"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 
+[lib]
+name = "model_converter"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+pyo3 = ["dep:pyo3"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 sha2 = "0.11"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+pyo3 = { version = "0.22", optional = true, features = ["extension-module"] }
 
 [dev-dependencies]
 safetensors = "0.7"

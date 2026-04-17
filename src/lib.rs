@@ -2,6 +2,8 @@ mod extract;
 mod iohash;
 mod metadata;
 mod parser;
+#[cfg(feature = "pyo3")]
+mod python;
 mod types;
 mod writer;
 

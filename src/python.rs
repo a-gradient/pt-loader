@@ -67,15 +67,15 @@ fn convert_json(
     strict_contiguous = None
   )
 )]
-fn load_pt_raw(
-  py: Python<'_>,
+fn load_pt_raw<'py>(
+  py: Python<'py>,
   input_pt: &str,
   max_archive_bytes: Option<u64>,
   max_tensor_count: Option<usize>,
   max_tensor_bytes: Option<usize>,
   max_pickle_bytes: Option<usize>,
   strict_contiguous: Option<bool>,
-) -> PyResult<PyObject> {
+) -> PyResult<Bound<'py, PyDict>> {
   let opts = build_options(
     input_pt,
     max_archive_bytes,
@@ -86,16 +86,16 @@ fn load_pt_raw(
   )?;
 
   let parsed = parse_checkpoint(Path::new(input_pt), &opts).map_err(into_py_error)?;
-  let output = PyDict::new_bound(py);
+  let output = PyDict::new(py);
   for (name, tensor) in parsed.tensors {
-    let item = PyDict::new_bound(py);
+    let item = PyDict::new(py);
     item.set_item("dtype", tensor.dtype.as_safetensors())?;
     item.set_item("shape", tensor.shape)?;
-    item.set_item("data", PyBytes::new_bound(py, &tensor.bytes))?;
+    item.set_item("data", PyBytes::new(py, &tensor.bytes))?;
     output.set_item(name, item)?;
   }
 
-  Ok(output.into_py(py))
+  Ok(output)
 }
 
 fn build_options(

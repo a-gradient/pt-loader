@@ -193,7 +193,12 @@ fn sha256_file(path: &Path) -> String {
 fn sha256_bytes(bytes: &[u8]) -> String {
   let mut hasher = Sha256::new();
   hasher.update(bytes);
-  format!("{:x}", hasher.finalize())
+  hasher
+    .finalize()
+    .as_slice()
+    .iter()
+    .map(|byte| format!("{byte:02x}"))
+    .collect()
 }
 
 fn format_shape_inline_yaml(raw: &str) -> String {

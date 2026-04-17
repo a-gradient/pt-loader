@@ -69,12 +69,16 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     hasher.update(&buf[..read]);
   }
   let digest = hasher.finalize();
-  Ok(format!("{digest:x}"))
+  Ok(bytes_to_lower_hex(digest.as_slice()))
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
   let mut hasher = Sha256::new();
   hasher.update(bytes);
   let digest = hasher.finalize();
-  format!("{digest:x}")
+  bytes_to_lower_hex(digest.as_slice())
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+  bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

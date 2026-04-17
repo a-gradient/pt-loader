@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 license = "MIT"
+exclude = [".github/**", "samples/**", "python/**", "pyproject.toml"]
 readme = "README.md"
 repository = "https://github.com/a-gradient/pt-loader"
 homepage = "https://github.com/a-gradient/pt-loader"

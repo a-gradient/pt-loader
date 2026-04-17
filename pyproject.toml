@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "pt-loader"
+name = "pt-safe-loader"
 version = "0.1.0"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 readme = "README.md"

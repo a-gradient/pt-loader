@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::types::{CheckpointMetadata, ConvertError, Result, TensorData};
 
-pub fn write_safetensors(
+pub(crate) fn write_safetensors(
   path: &Path,
   tensors: &BTreeMap<String, TensorData>,
   source_sha256: &str,

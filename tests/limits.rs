@@ -11,7 +11,7 @@ fn rejects_non_zip_pt() {
   let pt = dir.path().join("legacy.pt");
   std::fs::write(&pt, b"not a zip checkpoint").expect("write");
 
-  let err = PtCheckpoint::from_pt(&pt, LoadOptions::default()).expect_err("should fail");
+  let err = PtCheckpoint::load(&pt, LoadOptions::default()).expect_err("should fail");
   assert!(err.to_string().contains("torch zip checkpoints"));
 }
 
@@ -37,6 +37,6 @@ fn enforces_pickle_size_limit() {
     ..LoadOptions::default()
   };
 
-  let err = PtCheckpoint::from_pt(&pt, opts).expect_err("should fail");
+  let err = PtCheckpoint::load(&pt, opts).expect_err("should fail");
   assert!(err.to_string().contains("data.pkl"));
 }

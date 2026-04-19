@@ -23,7 +23,7 @@ Example:
 ```python
 from pt_loader import PtCheckpoint
 
-ckpt = PtCheckpoint.from_pt("samples/yolo26n.pt")
+ckpt = PtCheckpoint.load("samples/yolo26n.pt")
 print(ckpt.metadata()["tensor_count"])
 
 result = ckpt.export("out")
@@ -38,7 +38,7 @@ print(next(iter(tensors.values())).shape)
 ```rust
 use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
 
-let ckpt = PtCheckpoint::from_pt("samples/yolo26n.pt", LoadOptions::default())?;
+let ckpt = PtCheckpoint::load("samples/yolo26n.pt", LoadOptions::default())?;
 let result = ckpt.export("out", ExportOptions::default())?;
 println!("{}", result.weights_path.display());
 ```

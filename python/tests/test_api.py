@@ -12,7 +12,7 @@ def _sample_path(name: str) -> str:
 
 
 def test_from_pt_returns_checkpoint_and_metadata() -> None:
-  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  ckpt = mc.PtCheckpoint.load(_sample_path("yolo26n.pt"))
   metadata = ckpt.metadata()
 
   assert isinstance(metadata, dict)
@@ -21,7 +21,7 @@ def test_from_pt_returns_checkpoint_and_metadata() -> None:
 
 
 def test_export_writes_outputs(tmp_path) -> None:
-  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  ckpt = mc.PtCheckpoint.load(_sample_path("yolo26n.pt"))
   result = ckpt.export(tmp_path)
 
   assert isinstance(result, dict)
@@ -31,7 +31,7 @@ def test_export_writes_outputs(tmp_path) -> None:
 
 
 def test_state_dict_returns_numpy_tensors() -> None:
-  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  ckpt = mc.PtCheckpoint.load(_sample_path("yolo26n.pt"))
   tensors = ckpt.state_dict(backend="numpy")
   assert isinstance(tensors, dict)
   assert len(tensors) > 0
@@ -42,7 +42,7 @@ def test_state_dict_returns_numpy_tensors() -> None:
 
 
 def test_roundtrip_from_metadata_with_state_dict() -> None:
-  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  ckpt = mc.PtCheckpoint.load(_sample_path("yolo26n.pt"))
   metadata = ckpt.metadata()
   tensors = ckpt.state_dict(backend="numpy")
 

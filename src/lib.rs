@@ -38,7 +38,7 @@ pub struct PtCheckpoint {
 }
 
 impl PtCheckpoint {
-  pub fn from_pt(path: impl AsRef<Path>, opts: LoadOptions) -> Result<Self> {
+  pub fn load(path: impl AsRef<Path>, opts: LoadOptions) -> Result<Self> {
     let path = path.as_ref();
     let parsed = parse_checkpoint(path, &opts)?;
     let metadata = build_checkpoint_metadata(
@@ -609,7 +609,7 @@ mod tests {
     write_fixture_checkpoint(&pt_path, false).expect("fixture checkpoint");
 
     let out_dir = tmp.path().join("export");
-    let checkpoint = PtCheckpoint::from_pt(&pt_path, LoadOptions::default()).expect("checkpoint load should work");
+    let checkpoint = PtCheckpoint::load(&pt_path, LoadOptions::default()).expect("checkpoint load should work");
     let result = checkpoint
       .export(&out_dir, ExportOptions::default())
       .expect("export should work");
@@ -629,7 +629,7 @@ mod tests {
     let pt_path = tmp.path().join("unsafe.pt");
     write_fixture_checkpoint(&pt_path, true).expect("fixture checkpoint");
 
-    let err = PtCheckpoint::from_pt(&pt_path, LoadOptions::default()).expect_err("unsafe pickle should fail");
+    let err = PtCheckpoint::load(&pt_path, LoadOptions::default()).expect_err("unsafe pickle should fail");
     let msg = err.to_string();
     assert!(msg.contains("unsupported GLOBAL") || msg.contains("unsafe/unsupported pickle"));
   }

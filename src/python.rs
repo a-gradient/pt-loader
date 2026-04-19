@@ -114,7 +114,7 @@ impl PyPtCheckpoint {
       strict_contiguous = None
     )
   )]
-  fn from_pt(
+  fn load(
     _cls: &Bound<'_, PyType>,
     input_pt: &str,
     max_archive_bytes: Option<u64>,
@@ -131,7 +131,7 @@ impl PyPtCheckpoint {
       max_pickle_bytes,
       strict_contiguous,
     )?;
-    let inner = PtCheckpoint::from_pt(input_pt, opts).map_err(into_py_error)?;
+    let inner = PtCheckpoint::load(input_pt, opts).map_err(into_py_error)?;
     Ok(Self { inner })
   }
 

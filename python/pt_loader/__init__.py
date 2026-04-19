@@ -37,7 +37,7 @@ class PtCheckpoint:
     self._core = core
 
   @classmethod
-  def from_pt(
+  def load(
     cls,
     pt_path: str | Path,
     *,
@@ -47,7 +47,7 @@ class PtCheckpoint:
     max_pickle_bytes: int | None = None,
     strict_contiguous: bool | None = None,
   ) -> "PtCheckpoint":
-    core = PtCheckpointCore.from_pt(
+    core = PtCheckpointCore.load(
       str(pt_path),
       max_archive_bytes=max_archive_bytes,
       max_tensor_count=max_tensor_count,

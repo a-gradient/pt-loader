@@ -53,7 +53,7 @@ fn extracts_sample_yolo26n_pt() {
   }
   std::fs::create_dir_all(&out_dir).expect("create out dir");
 
-  let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default()).expect("sample checkpoint should load");
+  let checkpoint = PtCheckpoint::load(&input, LoadOptions::default()).expect("sample checkpoint should load");
   let result = checkpoint
     .export(&out_dir, ExportOptions::default())
     .expect("sample checkpoint should convert");

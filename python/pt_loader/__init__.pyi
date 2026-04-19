@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 
 class PtCheckpoint:
   @classmethod
-  def from_pt(
+  def load(
     cls,
     pt_path: str | Path,
     *,

@@ -24,7 +24,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("inspect requires exactly one argument: <input.pt>".into());
       }
       let input = PathBuf::from(&args[0]);
-      let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default())?;
+      let checkpoint = PtCheckpoint::load(&input, LoadOptions::default())?;
       println!("{}", serde_json::to_string_pretty(checkpoint.metadata())?);
       Ok(())
     }
@@ -51,7 +51,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
       }
 
-      let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default())?;
+      let checkpoint = PtCheckpoint::load(&input, LoadOptions::default())?;
       let result = checkpoint.export(&out_dir, ExportOptions::default())?;
       println!("{}", serde_json::to_string_pretty(&result)?);
       Ok(())

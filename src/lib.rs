@@ -5,7 +5,7 @@ mod parser;
 #[cfg(feature = "pyo3")]
 mod python;
 mod types;
-mod writer;
+pub mod writer;
 
 pub use types::{
   CheckpointMetadata, CheckpointTensorMetadata, ConvertError, DType, ExportFormat, ExportOptions, ExportResult,

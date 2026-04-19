@@ -1,4 +1,4 @@
-use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
+use pt_loader::{writer::inline_known_int_vec_fields_in_tensors, ExportOptions, LoadOptions, PtCheckpoint};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -81,7 +81,13 @@ fn extracts_sample_yolo26n_pt() {
     "converted out/model.yaml tensors must match samples/yolo26n.yaml"
   );
 
-  let out_yaml = read_model_yaml(result.metadata_path.as_ref().expect("metadata"));
+  let out_yaml_path = result.metadata_path.as_ref().expect("metadata");
+  let out_yaml = read_model_yaml(out_yaml_path);
+  let out_yaml_raw = std::fs::read_to_string(out_yaml_path).expect("read output yaml");
+  assert!(
+    out_yaml_raw.contains("shape: ["),
+    "expected inline flow sequence for tensor shape"
+  );
   let metadata_len = match &out_yaml.metadata {
     serde_yaml::Value::Mapping(map) => map.len(),
     _ => 0,
@@ -108,7 +114,7 @@ fn reference_yaml_needs_regeneration(yaml_path: &Path) -> bool {
     let raw = std::fs::read_to_string(yaml_path).expect("read existing yaml");
     parsed.source_sha256.trim().is_empty()
       || parsed.tensors.iter().any(|item| item.sha256.trim().is_empty())
-      || raw.contains("shape:\n")
+      || raw.contains("\n    shape:\n")
   }
 }
 
@@ -165,7 +171,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
   };
 
   let encoded = serde_yaml::to_string(&payload).expect("encode yaml");
-  let encoded = format_shape_inline_yaml(&encoded);
+  let encoded = inline_known_int_vec_fields_in_tensors(&encoded, &["shape", "stride"]);
   std::fs::write(yaml_path, encoded).expect("write generated yaml");
 }
 
@@ -197,47 +203,4 @@ fn sha256_bytes(bytes: &[u8]) -> String {
     .iter()
     .map(|byte| format!("{byte:02x}"))
     .collect()
-}
-
-fn format_shape_inline_yaml(raw: &str) -> String {
-  let lines = raw.lines().collect::<Vec<_>>();
-  let mut out = Vec::new();
-  let mut idx = 0usize;
-  while idx < lines.len() {
-    let line = lines[idx];
-    if line.trim() == "shape:" {
-      let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
-      let mut values = Vec::new();
-      let mut probe = idx + 1;
-      while probe < lines.len() {
-        let next = lines[probe];
-        let next_indent = next.chars().take_while(|ch| ch.is_whitespace()).count();
-        if next_indent < indent {
-          break;
-        }
-        let trimmed = next.trim();
-        if let Some(value) = trimmed.strip_prefix("- ") {
-          values.push(value.trim().to_string());
-          probe += 1;
-          continue;
-        }
-        break;
-      }
-
-      if values.is_empty() {
-        out.push(line.to_string());
-        idx += 1;
-        continue;
-      }
-
-      out.push(format!("{}shape: [{}]", " ".repeat(indent), values.join(", ")));
-      idx = probe;
-      continue;
-    }
-
-    out.push(line.to_string());
-    idx += 1;
-  }
-
-  out.join("\n") + "\n"
 }

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pt-safe-loader"
-version = "0.1.1"
+version = "0.1.2"
 description = "Safe parser-based PyTorch checkpoint converter to safetensors"
 license = "MIT"
 readme = "README.md"

@@ -2,6 +2,10 @@
 
 Safe parser-based PyTorch checkpoint converter to safetensors with both Rust and Python APIs.
 
+## Active Development Notice
+
+`pt-loader` is under active development. During `v0.1.x`, we may introduce breaking API and behavior changes in both Rust and Python interfaces without backward-compatibility guarantees.
+
 ## Features
 
 - Parses torch zip `.pt` checkpoints with strict safety limits.
@@ -52,10 +56,3 @@ cargo test
 cargo check --features pyo3
 uv run pytest -q
 ```
-
-## Releasing
-
-- Tag a release as `vX.Y.Z`.
-- GitHub Actions workflow `.github/workflows/release.yml` will:
-  - publish to crates.io using `CRATES_IO_TOKEN`
-  - build and publish to PyPI via trusted publishing

@@ -2,7 +2,7 @@ use ndarray::ArrayD;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct LoadOptions {
@@ -30,25 +30,49 @@ pub enum ExportFormat {
   Safetensors,
 }
 
+impl ExportFormat {
+  pub fn extension(self) -> &'static str {
+    match self {
+      ExportFormat::Safetensors => "safetensors",
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
   pub format: ExportFormat,
-  pub weights_filename: String,
-  pub metadata_filename: String,
+  pub weights_filename: PathBuf,
+  pub metadata_filename: PathBuf,
   pub include_metadata: bool,
   pub overwrite: bool,
 }
 
-impl Default for ExportOptions {
-  fn default() -> Self {
+impl ExportOptions {
+  pub fn new(format: ExportFormat, input_path: Option<&Path>) -> Self {
+    let weights_filename = default_weights_filename(format, input_path);
+    let metadata_filename = weights_filename.with_extension("yaml");
+
     Self {
-      format: ExportFormat::Safetensors,
-      weights_filename: "model.safetensors".to_string(),
-      metadata_filename: "model.yaml".to_string(),
+      format,
+      weights_filename,
+      metadata_filename,
       include_metadata: true,
       overwrite: false,
     }
   }
+}
+
+fn default_weights_filename(format: ExportFormat, input_path: Option<&Path>) -> PathBuf {
+  let ext = format.extension();
+  let Some(path) = input_path else {
+    return PathBuf::from(format!("model.{ext}"));
+  };
+
+  let Some(name) = path.file_name() else {
+    return PathBuf::from(format!("model.{ext}"));
+  };
+
+  Path::new(name).with_extension(ext)
 }
 
 #[derive(Debug, Clone, Serialize)]

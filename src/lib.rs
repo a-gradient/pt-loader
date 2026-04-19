@@ -131,7 +131,7 @@ impl PtCheckpoint {
       }
 
       let mut metadata = self.metadata.clone();
-      metadata.safetensors_file = opts.weights_filename.clone();
+      metadata.safetensors_file = opts.weights_filename.to_string_lossy().into_owned();
       metadata.created_at_unix = now_unix_secs();
       metadata.tensor_count = self.tensors.len();
       metadata.total_tensor_bytes = total_tensor_bytes(&self.tensors);
@@ -611,7 +611,7 @@ mod tests {
     let out_dir = tmp.path().join("export");
     let checkpoint = PtCheckpoint::load(&pt_path, LoadOptions::default()).expect("checkpoint load should work");
     let result = checkpoint
-      .export(&out_dir, ExportOptions::default())
+      .export(&out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(&pt_path)))
       .expect("export should work");
 
     assert!(result.weights_path.exists());

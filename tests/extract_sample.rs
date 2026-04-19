@@ -1,4 +1,6 @@
-use pt_loader::{writer::inline_known_int_vec_fields_in_tensors, ExportOptions, LoadOptions, PtCheckpoint};
+use pt_loader::{
+  writer::inline_known_int_vec_fields_in_tensors, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint,
+};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -55,7 +57,7 @@ fn extracts_sample_yolo26n_pt() {
 
   let checkpoint = PtCheckpoint::load(&input, LoadOptions::default()).expect("sample checkpoint should load");
   let result = checkpoint
-    .export(&out_dir, ExportOptions::default())
+    .export(&out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(&input)))
     .expect("sample checkpoint should convert");
 
   assert!(result.weights_path.exists());

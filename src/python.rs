@@ -5,6 +5,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyType};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 fn into_py_error(err: impl std::fmt::Display) -> PyErr {
   PyRuntimeError::new_err(err.to_string())
@@ -191,13 +192,11 @@ impl PyPtCheckpoint {
       }
     };
 
-    let opts = ExportOptions {
-      format: export_format,
-      weights_filename: weights_filename.to_string(),
-      metadata_filename: metadata_filename.to_string(),
-      include_metadata,
-      overwrite,
-    };
+    let mut opts = ExportOptions::new(export_format, None);
+    opts.weights_filename = PathBuf::from(weights_filename);
+    opts.metadata_filename = PathBuf::from(metadata_filename);
+    opts.include_metadata = include_metadata;
+    opts.overwrite = overwrite;
 
     let result = self.inner.export(out_dir, opts).map_err(into_py_error)?;
     to_json(&result)

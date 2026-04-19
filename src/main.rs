@@ -1,4 +1,4 @@
-use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
+use pt_loader::{ExportFormat, ExportOptions, LoadOptions, PtCheckpoint};
 use std::env;
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
       }
 
       let checkpoint = PtCheckpoint::load(&input, LoadOptions::default())?;
-      let result = checkpoint.export(&out_dir, ExportOptions::default())?;
+      let result = checkpoint.export(&out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(&input)))?;
       println!("{}", serde_json::to_string_pretty(&result)?);
       Ok(())
     }

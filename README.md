@@ -26,7 +26,7 @@ from pt_loader import PtCheckpoint
 ckpt = PtCheckpoint.load("samples/yolo26n.pt")
 print(ckpt.metadata()["tensor_count"])
 
-result = ckpt.export("out")
+result = ckpt.export(format="safetensors", dir="out")
 print(result["weights_path"])
 
 tensors = ckpt.state_dict(backend="numpy")
@@ -36,10 +36,12 @@ print(next(iter(tensors.values())).shape)
 ## Rust Usage
 
 ```rust
-use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
+use pt_loader::{ExportFormat, ExportOptions, LoadOptions, PtCheckpoint};
+use std::path::Path;
 
-let ckpt = PtCheckpoint::load("samples/yolo26n.pt", LoadOptions::default())?;
-let result = ckpt.export("out", ExportOptions::default())?;
+let input = "samples/yolo26n.pt";
+let ckpt = PtCheckpoint::load(input, LoadOptions::default())?;
+let result = ckpt.export("out", ExportOptions::new(ExportFormat::Safetensors, Some(Path::new(input))))?;
 println!("{}", result.weights_path.display());
 ```
 

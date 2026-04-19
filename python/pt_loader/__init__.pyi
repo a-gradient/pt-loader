@@ -31,11 +31,10 @@ class PtCheckpoint:
 
   def export(
     self,
-    out_dir: str | Path,
+    filename: str | Path | None = None,
     *,
-    format: Literal["safetensors"] = "safetensors",
-    weights_filename: str = "model.safetensors",
-    metadata_filename: str = "model.yaml",
+    dir: str | Path | None = None,
+    format: Literal["safetensors"] | None = None,
     include_metadata: bool = True,
     overwrite: bool = False,
   ) -> dict[str, Any]: ...

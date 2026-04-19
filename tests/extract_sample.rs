@@ -1,35 +1,11 @@
 use pt_loader::{
-  writer::inline_known_int_vec_fields_in_tensors, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint,
+  writer::inline_known_int_vec_fields_in_tensors, CheckpointMetadata, CheckpointSecurity,
+  CheckpointTensorMetadata, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint,
 };
 use safetensors::SafeTensors;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelYaml {
-  format_version: usize,
-  source_file: String,
-  source_sha256: String,
-  safetensors_file: String,
-  created_at_unix: u64,
-  tensor_count: usize,
-  total_tensor_bytes: usize,
-  #[serde(default)]
-  metadata: serde_yaml::Value,
-  #[serde(default)]
-  objects: Vec<String>,
-  tensors: Vec<ModelYamlTensor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelYamlTensor {
-  name: String,
-  dtype: String,
-  shape: Vec<usize>,
-  sha256: String,
-}
 
 #[test]
 fn extracts_all_sample_pt_files() {
@@ -174,7 +150,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
     let view = tensors.tensor(&name).expect("tensor view should exist");
     let raw = view.data();
     total_tensor_bytes += raw.len();
-    yaml_tensors.push(ModelYamlTensor {
+    yaml_tensors.push(CheckpointTensorMetadata {
       name,
       dtype: format!("{:?}", view.dtype()),
       shape: view.shape().iter().map(|dim| *dim as usize).collect(),
@@ -182,7 +158,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
     });
   }
 
-  let payload = ModelYaml {
+  let payload = CheckpointMetadata {
     format_version: 1,
     source_file: safetensors_path.display().to_string(),
     source_sha256: sha256_file(safetensors_path),
@@ -194,7 +170,10 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
     tensor_count: yaml_tensors.len(),
     total_tensor_bytes,
     metadata: serde_yaml::Value::Null,
-    objects: Vec::new(),
+    security: CheckpointSecurity {
+      objects: Vec::new(),
+      calls: Vec::new(),
+    },
     tensors: yaml_tensors,
   };
 
@@ -203,9 +182,23 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
   std::fs::write(yaml_path, encoded).expect("write generated yaml");
 }
 
-fn read_model_yaml(path: &Path) -> ModelYaml {
+fn read_model_yaml(path: &Path) -> CheckpointMetadata {
   let raw = std::fs::read_to_string(path).expect("read yaml");
-  serde_yaml::from_str::<ModelYaml>(&raw).expect("parse model yaml")
+  let mut value = serde_yaml::from_str::<serde_yaml::Value>(&raw).expect("parse yaml value");
+  if let serde_yaml::Value::Mapping(ref mut map) = value {
+    let security_key = serde_yaml::Value::String("security".to_string());
+    if !map.contains_key(&security_key) {
+      map.insert(
+        security_key,
+        serde_yaml::to_value(CheckpointSecurity {
+          objects: Vec::new(),
+          calls: Vec::new(),
+        })
+        .expect("encode default security"),
+      );
+    }
+  }
+  serde_yaml::from_value::<CheckpointMetadata>(value).expect("parse model yaml")
 }
 
 fn read_model_yaml_tensors(path: &Path) -> BTreeMap<String, (String, Vec<usize>, String)> {

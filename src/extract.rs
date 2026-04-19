@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::types::{ConvertError, Result, TensorRef, Value};
+use crate::types::{ConvertError, LoadOptions, Result, TensorRef, Value};
 
-pub(crate) fn extract_state_dict_tensors(root: &Value) -> Result<BTreeMap<String, TensorRef>> {
+pub(crate) fn extract_state_dict_tensors(root: &Value, opts: &LoadOptions) -> Result<BTreeMap<String, TensorRef>> {
   let mut out = BTreeMap::new();
 
-  if let Some(model) = find_named_child(root, "model") {
+  let first_key = opts.state_dict_root_key.as_deref().unwrap_or("model");
+  if let Some(model) = find_named_child(root, first_key) {
     collect_module_state_tensors(model, "", &mut out);
   }
   if out.is_empty() {
@@ -268,4 +269,79 @@ pub(crate) fn contiguous_stride(shape: &[usize]) -> Vec<usize> {
     running = running.saturating_mul(shape[idx]);
   }
   stride
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::types::{DType, StorageRef};
+
+  fn tensor_ref_with_key(key: &str) -> Value {
+    Value::TensorRef(TensorRef {
+      storage: StorageRef {
+        key: key.to_string(),
+        dtype: DType::F32,
+        size_elems: 1,
+      },
+      offset_elems: 0,
+      shape: vec![1],
+      stride: vec![1],
+    })
+  }
+
+  fn module_with_named_parameter(param_name: &str, storage_key: &str) -> Value {
+    Value::Object {
+      module: "torch.nn.modules.linear".to_string(),
+      name: "Linear".to_string(),
+      args: Vec::new(),
+      state: Some(Box::new(Value::Dict(vec![
+        (
+          Value::String("_parameters".to_string()),
+          Value::Dict(vec![(Value::String(param_name.to_string()), tensor_ref_with_key(storage_key))]),
+        ),
+        (Value::String("_buffers".to_string()), Value::Dict(Vec::new())),
+        (Value::String("_modules".to_string()), Value::Dict(Vec::new())),
+      ]))),
+    }
+  }
+
+  #[test]
+  fn prefers_model_by_default() {
+    let root = Value::Dict(vec![
+      (
+        Value::String("model".to_string()),
+        module_with_named_parameter("w_model", "model_key"),
+      ),
+      (
+        Value::String("module".to_string()),
+        module_with_named_parameter("w_module", "module_key"),
+      ),
+    ]);
+
+    let out = extract_state_dict_tensors(&root, &LoadOptions::default()).expect("extract tensors");
+    assert!(out.contains_key("w_model"));
+    assert!(!out.contains_key("w_module"));
+  }
+
+  #[test]
+  fn supports_custom_state_dict_root_key() {
+    let root = Value::Dict(vec![
+      (
+        Value::String("model".to_string()),
+        module_with_named_parameter("w_model", "model_key"),
+      ),
+      (
+        Value::String("module".to_string()),
+        module_with_named_parameter("w_module", "module_key"),
+      ),
+    ]);
+
+    let opts = LoadOptions {
+      state_dict_root_key: Some("module".to_string()),
+      ..LoadOptions::default()
+    };
+    let out = extract_state_dict_tensors(&root, &opts).expect("extract tensors");
+    assert!(out.contains_key("w_module"));
+    assert!(!out.contains_key("w_model"));
+  }
 }

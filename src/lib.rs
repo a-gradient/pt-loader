@@ -8,7 +8,8 @@ mod types;
 pub mod writer;
 
 pub use types::{
-  CheckpointMetadata, CheckpointTensorMetadata, ConvertError, DType, ExportFormat, ExportOptions, ExportResult,
+  CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata, ConvertError, DType, ExportFormat,
+  ExportOptions, ExportResult,
   LoadOptions, ReconstructSource, Result, StorageRef, TensorArray, TensorData, TensorRef, Value,
 };
 
@@ -24,7 +25,7 @@ use zip::read::ZipArchive;
 
 use extract::{contiguous_stride, extract_state_dict_tensors, numel};
 use iohash::{find_data_pkl_name, read_storage_blob, read_zip_entry, sha256_file, sha256_hex};
-use metadata::{collect_constructor_types, project_root_metadata};
+use metadata::{collect_call_types, collect_constructor_types, project_root_metadata};
 use parser::parse_pickle;
 use types::ParsedCheckpoint;
 use writer::{write_metadata_yaml, write_safetensors};
@@ -45,7 +46,7 @@ impl PtCheckpoint {
       path.display().to_string(),
       parsed.source_sha256.clone(),
       &parsed.metadata,
-      &parsed.objects,
+      &parsed.security,
       &parsed.tensors,
       "model.safetensors".to_string(),
     );
@@ -191,7 +192,8 @@ pub(crate) fn parse_checkpoint(path: &Path, opts: &LoadOptions) -> Result<Parsed
   let root = parse_pickle(&pickle_bytes, opts)?;
   let metadata = project_root_metadata(&root);
   let objects = collect_constructor_types(&root);
-  let tensor_refs = extract_state_dict_tensors(&root)?;
+  let calls = collect_call_types(&root);
+  let tensor_refs = extract_state_dict_tensors(&root, opts)?;
   if tensor_refs.is_empty() {
     return Err(ConvertError::InvalidStructure(
       "no tensors found in checkpoint state_dict".to_string(),
@@ -278,7 +280,7 @@ pub(crate) fn parse_checkpoint(path: &Path, opts: &LoadOptions) -> Result<Parsed
     warnings: Vec::new(),
     tensors,
     metadata,
-    objects,
+    security: CheckpointSecurity { objects, calls },
   })
 }
 
@@ -286,7 +288,7 @@ fn build_checkpoint_metadata(
   source_file: String,
   source_sha256: String,
   metadata: &serde_yaml::Value,
-  objects: &[String],
+  security: &CheckpointSecurity,
   tensors: &BTreeMap<String, TensorData>,
   safetensors_file: String,
 ) -> CheckpointMetadata {
@@ -299,7 +301,7 @@ fn build_checkpoint_metadata(
     tensor_count: tensors.len(),
     total_tensor_bytes: total_tensor_bytes(tensors),
     metadata: metadata.clone(),
-    objects: objects.to_vec(),
+    security: security.clone(),
     tensors: tensor_summaries_for_metadata(tensors),
   }
 }
@@ -595,7 +597,7 @@ fn f16_bits_to_f32(bits: u16) -> f32 {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::metadata::{collect_constructor_types, project_value_for_metadata};
+  use crate::metadata::{collect_call_types, collect_constructor_types, project_value_for_metadata};
   use crate::types::Value;
   use std::io::Write;
   use tempfile::tempdir;
@@ -621,6 +623,9 @@ mod tests {
     let yaml = fs::read_to_string(result.metadata_path.expect("metadata path")).expect("yaml readable");
     assert!(yaml.contains("layer.weight"));
     assert!(yaml.contains("dtype: F32") || yaml.contains("dtype: 'F32'"));
+    assert!(yaml.contains("security:"));
+    assert!(yaml.contains("objects: []"));
+    assert!(yaml.contains("calls: []"));
   }
 
   #[test]
@@ -720,6 +725,34 @@ mod tests {
 
     let objects = collect_constructor_types(&tree);
     assert_eq!(objects, vec!["a.One".to_string(), "b.Two".to_string()]);
+  }
+
+  #[test]
+  fn collects_call_types_deduplicated_in_first_seen_order() {
+    let tree = Value::List(vec![
+      Value::Call {
+        func: "a.fn".to_string(),
+        args: vec![Value::String("x".to_string())],
+        state: None,
+      },
+      Value::Object {
+        module: "m".to_string(),
+        name: "N".to_string(),
+        args: vec![Value::Call {
+          func: "b.fn".to_string(),
+          args: Vec::new(),
+          state: None,
+        }],
+        state: Some(Box::new(Value::Call {
+          func: "a.fn".to_string(),
+          args: Vec::new(),
+          state: None,
+        })),
+      },
+    ]);
+
+    let calls = collect_call_types(&tree);
+    assert_eq!(calls, vec!["a.fn".to_string(), "b.fn".to_string()]);
   }
 
   #[test]

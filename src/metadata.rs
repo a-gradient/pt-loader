@@ -178,6 +178,13 @@ pub(crate) fn collect_constructor_types(root: &Value) -> Vec<String> {
   out
 }
 
+pub(crate) fn collect_call_types(root: &Value) -> Vec<String> {
+  let mut seen = std::collections::BTreeSet::new();
+  let mut out = Vec::new();
+  collect_call_types_inner(root, &mut seen, &mut out);
+  out
+}
+
 fn collect_constructor_types_inner(
   value: &Value,
   seen: &mut std::collections::BTreeSet<String>,
@@ -223,6 +230,47 @@ fn collect_constructor_types_inner(
     Value::List(items) | Value::Tuple(items) | Value::Set(items) => {
       for item in items {
         collect_constructor_types_inner(item, seen, out);
+      }
+    }
+    _ => {}
+  }
+}
+
+fn collect_call_types_inner(value: &Value, seen: &mut std::collections::BTreeSet<String>, out: &mut Vec<String>) {
+  match value {
+    Value::Object { args, state, .. } => {
+      for arg in args {
+        collect_call_types_inner(arg, seen, out);
+      }
+      if let Some(state) = state {
+        collect_call_types_inner(state, seen, out);
+      }
+    }
+    Value::Call { func, args, state } => {
+      if seen.insert(func.clone()) {
+        out.push(func.clone());
+      }
+      for item in args {
+        collect_call_types_inner(item, seen, out);
+      }
+      if let Some(state) = state {
+        collect_call_types_inner(state, seen, out);
+      }
+    }
+    Value::Dict(entries) => {
+      for (k, v) in entries {
+        collect_call_types_inner(k, seen, out);
+        collect_call_types_inner(v, seen, out);
+      }
+    }
+    Value::OrderedDict(entries) => {
+      for (_, v) in entries {
+        collect_call_types_inner(v, seen, out);
+      }
+    }
+    Value::List(items) | Value::Tuple(items) | Value::Set(items) => {
+      for item in items {
+        collect_call_types_inner(item, seen, out);
       }
     }
     _ => {}

@@ -43,6 +43,7 @@ class PtCheckpoint:
     max_tensor_bytes: int | None = None,
     max_pickle_bytes: int | None = None,
     strict_contiguous: bool | None = None,
+    state_dict_root_key: str | None = None,
   ) -> "PtCheckpoint":
     pt_path_obj = Path(pt_path)
     core = PtCheckpointCore.load(
@@ -52,6 +53,7 @@ class PtCheckpoint:
       max_tensor_bytes=max_tensor_bytes,
       max_pickle_bytes=max_pickle_bytes,
       strict_contiguous=strict_contiguous,
+      state_dict_root_key=state_dict_root_key,
     )
     return cls(core, input_path=pt_path_obj)
 

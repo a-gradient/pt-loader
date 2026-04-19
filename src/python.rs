@@ -20,6 +20,7 @@ fn build_load_options(
   max_tensor_bytes: Option<usize>,
   max_pickle_bytes: Option<usize>,
   strict_contiguous: Option<bool>,
+  state_dict_root_key: Option<String>,
 ) -> PyResult<LoadOptions> {
   if input_pt.is_empty() {
     return Err(PyValueError::new_err("input_pt must not be empty"));
@@ -41,6 +42,7 @@ fn build_load_options(
   if let Some(value) = strict_contiguous {
     opts.strict_contiguous = value;
   }
+  opts.state_dict_root_key = state_dict_root_key;
 
   Ok(opts)
 }
@@ -73,7 +75,8 @@ impl PyPtCheckpoint {
       max_tensor_count = None,
       max_tensor_bytes = None,
       max_pickle_bytes = None,
-      strict_contiguous = None
+      strict_contiguous = None,
+      state_dict_root_key = None
     )
   )]
   fn load(
@@ -84,6 +87,7 @@ impl PyPtCheckpoint {
     max_tensor_bytes: Option<usize>,
     max_pickle_bytes: Option<usize>,
     strict_contiguous: Option<bool>,
+    state_dict_root_key: Option<String>,
   ) -> PyResult<Self> {
     let opts = build_load_options(
       input_pt,
@@ -92,6 +96,7 @@ impl PyPtCheckpoint {
       max_tensor_bytes,
       max_pickle_bytes,
       strict_contiguous,
+      state_dict_root_key,
     )?;
     let inner = PtCheckpoint::load(input_pt, opts).map_err(into_py_error)?;
     Ok(Self { inner })

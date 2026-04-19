@@ -11,6 +11,7 @@ pub struct LoadOptions {
   pub max_tensor_bytes: usize,
   pub max_pickle_bytes: usize,
   pub strict_contiguous: bool,
+  pub state_dict_root_key: Option<String>,
 }
 
 impl Default for LoadOptions {
@@ -21,6 +22,7 @@ impl Default for LoadOptions {
       max_tensor_bytes: 1024 * 1024 * 1024,
       max_pickle_bytes: 64 * 1024 * 1024,
       strict_contiguous: true,
+      state_dict_root_key: None,
     }
   }
 }
@@ -93,6 +95,14 @@ pub struct CheckpointTensorMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSecurity {
+  #[serde(default)]
+  pub objects: Vec<String>,
+  #[serde(default)]
+  pub calls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointMetadata {
   pub format_version: usize,
   pub source_file: String,
@@ -103,8 +113,7 @@ pub struct CheckpointMetadata {
   pub total_tensor_bytes: usize,
   #[serde(default)]
   pub metadata: serde_yaml::Value,
-  #[serde(default)]
-  pub objects: Vec<String>,
+  pub security: CheckpointSecurity,
   pub tensors: Vec<CheckpointTensorMetadata>,
 }
 
@@ -340,5 +349,5 @@ pub struct ParsedCheckpoint {
   pub warnings: Vec<String>,
   pub tensors: BTreeMap<String, TensorData>,
   pub metadata: serde_yaml::Value,
-  pub objects: Vec<String>,
+  pub security: CheckpointSecurity,
 }

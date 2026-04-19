@@ -144,6 +144,24 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
       }
       serde_yaml::Value::Mapping(map)
     }
+    Value::Call { func, args } => serde_yaml::Value::Mapping(
+      [
+        (
+          serde_yaml::Value::String("$type".to_string()),
+          serde_yaml::Value::String("call".to_string()),
+        ),
+        (
+          serde_yaml::Value::String("$func".to_string()),
+          serde_yaml::Value::String(func.clone()),
+        ),
+        (
+          serde_yaml::Value::String("$args".to_string()),
+          serde_yaml::Value::Sequence(args.iter().map(project_value_for_metadata).collect()),
+        ),
+      ]
+      .into_iter()
+      .collect(),
+    ),
   }
 }
 
@@ -185,6 +203,11 @@ fn collect_constructor_types_inner(
       }
       if let Some(state) = state {
         collect_constructor_types_inner(state, seen, out);
+      }
+    }
+    Value::Call { args, .. } => {
+      for item in args {
+        collect_constructor_types_inner(item, seen, out);
       }
     }
     Value::Dict(entries) => {

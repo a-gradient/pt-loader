@@ -294,6 +294,10 @@ pub enum Value {
   StorageRef(StorageRef),
   TensorRef(TensorRef),
   OrderedDict(Vec<(String, Value)>),
+  Call {
+    func: String,
+    args: Vec<Value>,
+  },
   Object {
     module: String,
     name: String,

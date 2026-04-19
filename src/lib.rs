@@ -631,7 +631,7 @@ mod tests {
 
     let err = PtCheckpoint::load(&pt_path, LoadOptions::default()).expect_err("unsafe pickle should fail");
     let msg = err.to_string();
-    assert!(msg.contains("unsupported GLOBAL") || msg.contains("unsafe/unsupported pickle"));
+    assert!(msg.contains("could not find a tensor state_dict"));
   }
 
   #[test]
@@ -720,6 +720,38 @@ mod tests {
 
     let objects = collect_constructor_types(&tree);
     assert_eq!(objects, vec!["a.One".to_string(), "b.Two".to_string()]);
+  }
+
+  #[test]
+  fn projects_call_metadata() {
+    let value = Value::Call {
+      func: "ultralytics.utils.IterableSimpleNamespace".to_string(),
+      args: vec![Value::String("x".to_string()), Value::Int(1)],
+    };
+
+    let projected = project_value_for_metadata(&value);
+    let mapping = match projected {
+      serde_yaml::Value::Mapping(map) => map,
+      other => panic!("expected mapping, got {:?}", other),
+    };
+
+    let type_key = serde_yaml::Value::String("$type".to_string());
+    let func_key = serde_yaml::Value::String("$func".to_string());
+    let args_key = serde_yaml::Value::String("$args".to_string());
+    assert_eq!(
+      mapping.get(&type_key),
+      Some(&serde_yaml::Value::String("call".to_string()))
+    );
+    assert_eq!(
+      mapping.get(&func_key),
+      Some(&serde_yaml::Value::String(
+        "ultralytics.utils.IterableSimpleNamespace".to_string()
+      ))
+    );
+    assert!(matches!(
+      mapping.get(&args_key),
+      Some(serde_yaml::Value::Sequence(items)) if items.len() == 2
+    ));
   }
 
   fn write_fixture_checkpoint(path: &Path, unsafe_payload: bool) -> Result<()> {

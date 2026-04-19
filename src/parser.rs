@@ -417,10 +417,10 @@ impl<'a> PickleParser<'a> {
           ))),
         }
       }
-      _ => Err(ConvertError::InvalidStructure(format!(
-        "unsupported GLOBAL in REDUCE: {}.{}",
-        module, name
-      ))),
+      _ => Ok(Value::Call {
+        func: format!("{module}.{name}"),
+        args,
+      }),
     }
   }
 

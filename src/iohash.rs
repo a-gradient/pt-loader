@@ -47,10 +47,7 @@ pub(crate) fn read_storage_blob<R: Read + std::io::Seek>(
   )))
 }
 
-pub(crate) fn read_zip_entry<R: Read + std::io::Seek>(
-  archive: &mut ZipArchive<R>,
-  name: &str,
-) -> Result<Vec<u8>> {
+pub(crate) fn read_zip_entry<R: Read + std::io::Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<Vec<u8>> {
   let mut file = archive.by_name(name)?;
   let mut out = Vec::new();
   file.read_to_end(&mut out)?;

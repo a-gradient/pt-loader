@@ -65,7 +65,9 @@ fn collect_module_state_tensors(value: &Value, prefix: &str, out: &mut BTreeMap<
     }
     Value::Dict(entries) => {
       for (key, child) in entries {
-        let Some(name) = key_as_string(key) else { continue };
+        let Some(name) = key_as_string(key) else {
+          continue;
+        };
         if name == "state_dict" {
           collect_prefixed_tensor_map(child, "", out);
           continue;
@@ -126,11 +128,7 @@ fn collect_from_module_state(state: &Value, prefix: &str, out: &mut BTreeMap<Str
   }
 }
 
-fn collect_named_tensors_from_mapping(
-  value: &Value,
-  prefix: &str,
-  out: &mut BTreeMap<String, TensorRef>,
-) {
+fn collect_named_tensors_from_mapping(value: &Value, prefix: &str, out: &mut BTreeMap<String, TensorRef>) {
   let Some(entries) = mapping_entries(value) else {
     return;
   };

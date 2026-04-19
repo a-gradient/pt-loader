@@ -11,26 +11,49 @@ def _sample_path(name: str) -> str:
   return os.path.join(root, "samples", name)
 
 
-def test_inspect_returns_tensor_summary() -> None:
-  report = mc.inspect(_sample_path("yolo26n.pt"))
-  assert isinstance(report, dict)
-  assert report["tensor_count"] > 0
-  assert isinstance(report["tensors"], list)
+def test_from_pt_returns_checkpoint_and_metadata() -> None:
+  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  metadata = ckpt.metadata()
+
+  assert isinstance(metadata, dict)
+  assert metadata["tensor_count"] > 0
+  assert isinstance(metadata["tensors"], list)
 
 
-def test_convert_writes_outputs(tmp_path) -> None:
-  result = mc.convert(_sample_path("yolo26n.pt"), out_dir=str(tmp_path))
+def test_export_writes_outputs(tmp_path) -> None:
+  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  result = ckpt.export(tmp_path)
+
   assert isinstance(result, dict)
   assert result["tensor_count"] > 0
-  assert os.path.exists(result["safetensors_path"])
-  assert os.path.exists(result["model_yaml_path"])
+  assert os.path.exists(result["weights_path"])
+  assert os.path.exists(result["metadata_path"])
 
 
-def test_load_pt_returns_numpy_tensors() -> None:
-  tensors = mc.load_pt(_sample_path("yolo26n.pt"))
+def test_state_dict_returns_numpy_tensors() -> None:
+  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  tensors = ckpt.state_dict(backend="numpy")
   assert isinstance(tensors, dict)
   assert len(tensors) > 0
 
   first = next(iter(tensors.values()))
   assert isinstance(first, np.ndarray)
   assert first.size > 0
+
+
+def test_roundtrip_from_metadata_with_state_dict() -> None:
+  ckpt = mc.PtCheckpoint.from_pt(_sample_path("yolo26n.pt"))
+  metadata = ckpt.metadata()
+  tensors = ckpt.state_dict(backend="numpy")
+
+  reconstructed = mc.PtCheckpoint.from_metadata(
+    metadata,
+    state_dict=tensors,
+    backend="numpy",
+  )
+
+  reconstructed_tensors = reconstructed.state_dict(backend="numpy")
+  assert reconstructed_tensors.keys() == tensors.keys()
+
+  first_name = next(iter(tensors.keys()))
+  assert reconstructed_tensors[first_name].shape == tensors[first_name].shape

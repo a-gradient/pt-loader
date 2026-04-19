@@ -1,4 +1,4 @@
-use pt_loader::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
+use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,11 +35,7 @@ fn extracts_sample_yolo26n_pt() {
   let input = crate_root.join("samples").join("yolo26n.pt");
   let reference_safetensors = crate_root.join("samples").join("yolo26n.safetensors");
   let reference_yaml = crate_root.join("samples").join("yolo26n.yaml");
-  assert!(
-    input.exists(),
-    "expected sample checkpoint at {}",
-    input.display()
-  );
+  assert!(input.exists(), "expected sample checkpoint at {}", input.display());
   let needs_regen = reference_yaml_needs_regeneration(&reference_yaml);
   if needs_regen {
     assert!(
@@ -57,19 +53,17 @@ fn extracts_sample_yolo26n_pt() {
   }
   std::fs::create_dir_all(&out_dir).expect("create out dir");
 
-  let result = convert_pt_to_safetensors(&input, &out_dir, ConvertOptions::default())
+  let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default()).expect("sample checkpoint should load");
+  let result = checkpoint
+    .export(&out_dir, ExportOptions::default())
     .expect("sample checkpoint should convert");
 
-  assert!(result.safetensors_path.exists());
-  assert!(result.model_yaml_path.exists());
+  assert!(result.weights_path.exists());
+  assert!(result.metadata_path.as_ref().expect("metadata path").exists());
   assert!(result.tensor_count > 0);
   assert!(result.total_tensor_bytes > 0);
 
-  let report = inspect_pt(&input).expect("sample inspect should pass");
-  assert!(report.tensor_count > 0);
-  assert_eq!(report.tensor_count, result.tensor_count);
-
-  let converted_shapes = read_safetensors_shapes(&result.safetensors_path);
+  let converted_shapes = read_safetensors_shapes(&result.weights_path);
   assert!(!converted_shapes.is_empty(), "converted safetensors is empty");
   if reference_safetensors.exists() {
     let reference_shapes = read_safetensors_shapes(&reference_safetensors);
@@ -80,14 +74,14 @@ fn extracts_sample_yolo26n_pt() {
     );
   }
 
-  let out_yaml_tensors = read_model_yaml_tensors(&result.model_yaml_path);
+  let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
   let reference_yaml_tensors = read_model_yaml_tensors(&reference_yaml);
   assert_eq!(
     out_yaml_tensors, reference_yaml_tensors,
     "converted out/model.yaml tensors must match samples/yolo26n.yaml"
   );
 
-  let out_yaml = read_model_yaml(&result.model_yaml_path);
+  let out_yaml = read_model_yaml(result.metadata_path.as_ref().expect("metadata"));
   let metadata_len = match &out_yaml.metadata {
     serde_yaml::Value::Mapping(map) => map.len(),
     _ => 0,
@@ -124,10 +118,7 @@ fn read_safetensors_shapes(path: &Path) -> BTreeMap<String, Vec<usize>> {
   let mut shapes = BTreeMap::new();
   for name in tensors.names() {
     let view = tensors.tensor(name).expect("tensor view should exist");
-    shapes.insert(
-      name.to_string(),
-      view.shape().iter().map(|dim| *dim as usize).collect(),
-    );
+    shapes.insert(name.to_string(), view.shape().iter().map(|dim| *dim as usize).collect());
   }
   shapes
 }
@@ -239,11 +230,7 @@ fn format_shape_inline_yaml(raw: &str) -> String {
         continue;
       }
 
-      out.push(format!(
-        "{}shape: [{}]",
-        " ".repeat(indent),
-        values.join(", ")
-      ));
+      out.push(format!("{}shape: [{}]", " ".repeat(indent), values.join(", ")));
       idx = probe;
       continue;
     }

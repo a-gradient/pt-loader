@@ -1,10 +1,11 @@
-use serde::Serialize;
+use ndarray::ArrayD;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
-pub struct ConvertOptions {
+pub struct LoadOptions {
   pub max_archive_bytes: u64,
   pub max_tensor_count: usize,
   pub max_tensor_bytes: usize,
@@ -12,7 +13,7 @@ pub struct ConvertOptions {
   pub strict_contiguous: bool,
 }
 
-impl Default for ConvertOptions {
+impl Default for LoadOptions {
   fn default() -> Self {
     Self {
       max_archive_bytes: 4 * 1024 * 1024 * 1024,
@@ -24,33 +25,81 @@ impl Default for ConvertOptions {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+  Safetensors,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportOptions {
+  pub format: ExportFormat,
+  pub weights_filename: String,
+  pub metadata_filename: String,
+  pub include_metadata: bool,
+  pub overwrite: bool,
+}
+
+impl Default for ExportOptions {
+  fn default() -> Self {
+    Self {
+      format: ExportFormat::Safetensors,
+      weights_filename: "model.safetensors".to_string(),
+      metadata_filename: "model.yaml".to_string(),
+      include_metadata: true,
+      overwrite: false,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct TensorSummary {
+pub struct ExportResult {
+  pub weights_path: PathBuf,
+  pub metadata_path: Option<PathBuf>,
+  pub source_sha256: String,
+  pub tensor_count: usize,
+  pub total_tensor_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointTensorMetadata {
   pub name: String,
   pub dtype: String,
   pub shape: Vec<usize>,
-  pub nbytes: usize,
+  pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct InspectionReport {
-  pub detected_format: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointMetadata {
+  pub format_version: usize,
   pub source_file: String,
   pub source_sha256: String,
+  pub safetensors_file: String,
+  pub created_at_unix: u64,
   pub tensor_count: usize,
   pub total_tensor_bytes: usize,
-  pub tensors: Vec<TensorSummary>,
-  pub warnings: Vec<String>,
+  #[serde(default)]
+  pub metadata: serde_yaml::Value,
+  #[serde(default)]
+  pub objects: Vec<String>,
+  pub tensors: Vec<CheckpointTensorMetadata>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ConvertResult {
-  pub safetensors_path: PathBuf,
-  pub model_yaml_path: PathBuf,
-  pub source_file: PathBuf,
-  pub source_sha256: String,
-  pub tensor_count: usize,
-  pub total_tensor_bytes: usize,
+#[derive(Debug, Clone)]
+pub enum ReconstructSource {
+  WeightsFile(PathBuf),
+  StateDict(BTreeMap<String, TensorData>),
+}
+
+#[derive(Debug, Clone)]
+pub enum TensorArray {
+  F32(ArrayD<f32>),
+  F64(ArrayD<f64>),
+  I8(ArrayD<i8>),
+  I16(ArrayD<i16>),
+  I32(ArrayD<i32>),
+  I64(ArrayD<i64>),
+  U8(ArrayD<u8>),
+  Bool(ArrayD<bool>),
 }
 
 #[derive(Debug)]
@@ -58,6 +107,8 @@ pub enum ConvertError {
   Io(std::io::Error),
   Zip(zip::result::ZipError),
   Json(serde_json::Error),
+  Yaml(serde_yaml::Error),
+  Ndarray(ndarray::ShapeError),
   UnsupportedFormat(String),
   UnsafeOpcode { opcode: u8, offset: usize },
   InvalidStructure(String),
@@ -70,15 +121,18 @@ impl fmt::Display for ConvertError {
       ConvertError::Io(err) => write!(f, "io error: {}", err),
       ConvertError::Zip(err) => write!(f, "zip error: {}", err),
       ConvertError::Json(err) => write!(f, "json error: {}", err),
+      ConvertError::Yaml(err) => write!(f, "yaml error: {}", err),
+      ConvertError::Ndarray(err) => write!(f, "ndarray error: {}", err),
       ConvertError::UnsupportedFormat(msg) => write!(f, "unsupported format: {}", msg),
       ConvertError::UnsafeOpcode { opcode, offset } => {
-        write!(
-          f,
-          "unsafe/unsupported pickle opcode 0x{opcode:02x} at offset {offset}"
-        )
+        write!(f, "unsafe/unsupported pickle opcode 0x{opcode:02x} at offset {offset}")
       }
-      ConvertError::InvalidStructure(msg) => write!(f, "invalid checkpoint structure: {}", msg),
-      ConvertError::ResourceLimitExceeded(msg) => write!(f, "resource limit exceeded: {}", msg),
+      ConvertError::InvalidStructure(msg) => {
+        write!(f, "invalid checkpoint structure: {}", msg)
+      }
+      ConvertError::ResourceLimitExceeded(msg) => {
+        write!(f, "resource limit exceeded: {}", msg)
+      }
     }
   }
 }
@@ -100,6 +154,18 @@ impl From<zip::result::ZipError> for ConvertError {
 impl From<serde_json::Error> for ConvertError {
   fn from(value: serde_json::Error) -> Self {
     Self::Json(value)
+  }
+}
+
+impl From<serde_yaml::Error> for ConvertError {
+  fn from(value: serde_yaml::Error) -> Self {
+    Self::Yaml(value)
+  }
+}
+
+impl From<ndarray::ShapeError> for ConvertError {
+  fn from(value: ndarray::ShapeError) -> Self {
+    Self::Ndarray(value)
   }
 }
 
@@ -143,6 +209,22 @@ impl DType {
       DType::Bool => "BOOL",
     }
   }
+
+  pub fn from_safetensors(value: &str) -> Option<Self> {
+    match value {
+      "F16" => Some(DType::F16),
+      "BF16" => Some(DType::BF16),
+      "F32" => Some(DType::F32),
+      "F64" => Some(DType::F64),
+      "I8" => Some(DType::I8),
+      "I16" => Some(DType::I16),
+      "I32" => Some(DType::I32),
+      "I64" => Some(DType::I64),
+      "U8" => Some(DType::U8),
+      "BOOL" => Some(DType::Bool),
+      _ => None,
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +263,10 @@ pub enum Value {
   Set(Vec<Value>),
   Tuple(Vec<Value>),
   Dict(Vec<(Value, Value)>),
-  Global { module: String, name: String },
+  Global {
+    module: String,
+    name: String,
+  },
   StorageRef(StorageRef),
   TensorRef(TensorRef),
   OrderedDict(Vec<(String, Value)>),
@@ -207,9 +292,7 @@ impl Value {
     match self {
       Value::String(v) => Ok(v.clone()),
       Value::Int(v) => Ok(v.to_string()),
-      _ => Err(ConvertError::InvalidStructure(
-        "expected string".to_string(),
-      )),
+      _ => Err(ConvertError::InvalidStructure("expected string".to_string())),
     }
   }
 

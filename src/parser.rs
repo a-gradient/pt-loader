@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::types::{ConvertError, ConvertOptions, DType, Result, StorageRef, TensorRef, Value};
+use crate::types::{ConvertError, DType, LoadOptions, Result, StorageRef, TensorRef, Value};
 
-pub(crate) fn parse_pickle(input: &[u8], opts: &ConvertOptions) -> Result<Value> {
+pub(crate) fn parse_pickle(input: &[u8], opts: &LoadOptions) -> Result<Value> {
   PickleParser::new(input, opts).parse()
 }
 
@@ -12,11 +12,11 @@ struct PickleParser<'a> {
   stack: Vec<Value>,
   memo: HashMap<usize, Value>,
   next_memo: usize,
-  opts: &'a ConvertOptions,
+  opts: &'a LoadOptions,
 }
 
 impl<'a> PickleParser<'a> {
-  fn new(input: &'a [u8], opts: &'a ConvertOptions) -> Self {
+  fn new(input: &'a [u8], opts: &'a LoadOptions) -> Self {
     Self {
       input,
       pos: 0,
@@ -109,18 +109,20 @@ impl<'a> PickleParser<'a> {
         }
         b'h' => {
           let idx = self.read_u8()? as usize;
-          let value =
-            self.memo.get(&idx).cloned().ok_or_else(|| {
-              ConvertError::InvalidStructure(format!("missing memo entry {}", idx))
-            })?;
+          let value = self
+            .memo
+            .get(&idx)
+            .cloned()
+            .ok_or_else(|| ConvertError::InvalidStructure(format!("missing memo entry {}", idx)))?;
           self.stack.push(value);
         }
         b'j' => {
           let idx = self.read_u32_le()? as usize;
-          let value =
-            self.memo.get(&idx).cloned().ok_or_else(|| {
-              ConvertError::InvalidStructure(format!("missing memo entry {}", idx))
-            })?;
+          let value = self
+            .memo
+            .get(&idx)
+            .cloned()
+            .ok_or_else(|| ConvertError::InvalidStructure(format!("missing memo entry {}", idx)))?;
           self.stack.push(value);
         }
         b'q' => {
@@ -134,16 +136,19 @@ impl<'a> PickleParser<'a> {
         }
         b'r' => {
           let idx = self.read_u32_le()? as usize;
-          let top = self.stack.last().cloned().ok_or_else(|| {
-            ConvertError::InvalidStructure("LONG_BINPUT on empty stack".to_string())
-          })?;
+          let top = self
+            .stack
+            .last()
+            .cloned()
+            .ok_or_else(|| ConvertError::InvalidStructure("LONG_BINPUT on empty stack".to_string()))?;
           self.memo.insert(idx, top);
         }
         b'\x94' => {
-          let top =
-            self.stack.last().cloned().ok_or_else(|| {
-              ConvertError::InvalidStructure("MEMOIZE on empty stack".to_string())
-            })?;
+          let top = self
+            .stack
+            .last()
+            .cloned()
+            .ok_or_else(|| ConvertError::InvalidStructure("MEMOIZE on empty stack".to_string()))?;
           let idx = self.next_memo;
           self.next_memo += 1;
           self.memo.insert(idx, top);
@@ -282,9 +287,7 @@ impl<'a> PickleParser<'a> {
         list.extend(items);
         Ok(Value::List(list))
       }
-      _ => Err(ConvertError::InvalidStructure(
-        "APPENDS target is not list".to_string(),
-      )),
+      _ => Err(ConvertError::InvalidStructure("APPENDS target is not list".to_string())),
     }
   }
 
@@ -294,9 +297,7 @@ impl<'a> PickleParser<'a> {
         list.push(value);
         Ok(Value::List(list))
       }
-      _ => Err(ConvertError::InvalidStructure(
-        "APPEND target is not list".to_string(),
-      )),
+      _ => Err(ConvertError::InvalidStructure("APPEND target is not list".to_string())),
     }
   }
 
@@ -383,8 +384,7 @@ impl<'a> PickleParser<'a> {
         }
         Ok(args[0].clone())
       }
-      ("__builtin__", "set") | ("builtins", "set") | ("__builtin__", "frozenset")
-      | ("builtins", "frozenset") => {
+      ("__builtin__", "set") | ("builtins", "set") | ("__builtin__", "frozenset") | ("builtins", "frozenset") => {
         if args.is_empty() {
           return Ok(Value::Set(Vec::new()));
         }
@@ -427,19 +427,11 @@ impl<'a> PickleParser<'a> {
   fn apply_newobj(&self, cls: Value, args: Value) -> Result<Value> {
     let (module, name) = match cls {
       Value::Global { module, name } => (module, name),
-      _ => {
-        return Err(ConvertError::InvalidStructure(
-          "NEWOBJ class is not GLOBAL".to_string(),
-        ))
-      }
+      _ => return Err(ConvertError::InvalidStructure("NEWOBJ class is not GLOBAL".to_string())),
     };
     let _args = match args {
       Value::Tuple(items) => items,
-      _ => {
-        return Err(ConvertError::InvalidStructure(
-          "NEWOBJ args must be tuple".to_string(),
-        ))
-      }
+      _ => return Err(ConvertError::InvalidStructure("NEWOBJ args must be tuple".to_string())),
     };
 
     match (module.as_str(), name.as_str()) {
@@ -457,15 +449,7 @@ impl<'a> PickleParser<'a> {
     match (inst, state) {
       (Value::OrderedDict(entries), Value::None) => Ok(Value::OrderedDict(entries)),
       (Value::TensorRef(spec), Value::None) => Ok(Value::TensorRef(spec)),
-      (
-        Value::Object {
-          module,
-          name,
-          args,
-          ..
-        },
-        state,
-      ) => Ok(Value::Object {
+      (Value::Object { module, name, args, .. }, state) => Ok(Value::Object {
         module,
         name,
         args,
@@ -516,11 +500,7 @@ impl<'a> PickleParser<'a> {
     let key = parts[2].as_string()?;
     let size_elems = parts[4].as_usize()?;
 
-    Ok(Value::StorageRef(StorageRef {
-      key,
-      dtype,
-      size_elems,
-    }))
+    Ok(Value::StorageRef(StorageRef { key, dtype, size_elems }))
   }
 
   fn pop_mark_items(&mut self) -> Result<Vec<Value>> {
@@ -532,9 +512,7 @@ impl<'a> PickleParser<'a> {
       }
       out.push(value);
     }
-    Err(ConvertError::InvalidStructure(
-      "MARK not found on stack".to_string(),
-    ))
+    Err(ConvertError::InvalidStructure("MARK not found on stack".to_string()))
   }
 
   fn pop_stack(&mut self) -> Result<Value> {
@@ -603,15 +581,13 @@ impl<'a> PickleParser<'a> {
       }
       self.pos += 1;
     }
-    Err(ConvertError::InvalidStructure(
-      "unterminated GLOBAL line".to_string(),
-    ))
+    Err(ConvertError::InvalidStructure("unterminated GLOBAL line".to_string()))
   }
 
   fn read_string(&mut self, len: usize) -> Result<String> {
     let bytes = self.read_bytes(len)?;
-    let value = std::str::from_utf8(bytes)
-      .map_err(|_| ConvertError::InvalidStructure("invalid utf-8 string".to_string()))?;
+    let value =
+      std::str::from_utf8(bytes).map_err(|_| ConvertError::InvalidStructure("invalid utf-8 string".to_string()))?;
     Ok(value.to_string())
   }
 
@@ -645,8 +621,7 @@ impl<'a> PickleParser<'a> {
       value -= 1_i128 << (len * 8);
     }
 
-    i64::try_from(value)
-      .map_err(|_| ConvertError::InvalidStructure("LONG integer does not fit in i64".to_string()))
+    i64::try_from(value).map_err(|_| ConvertError::InvalidStructure("LONG integer does not fit in i64".to_string()))
   }
 }
 

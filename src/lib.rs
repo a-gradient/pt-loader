@@ -8,96 +8,151 @@ mod types;
 mod writer;
 
 pub use types::{
-  ConvertError, ConvertOptions, ConvertResult, DType, InspectionReport, Result, StorageRef,
-  TensorRef, TensorSummary, Value,
+  CheckpointMetadata, CheckpointTensorMetadata, ConvertError, DType, ExportFormat, ExportOptions, ExportResult,
+  LoadOptions, ReconstructSource, Result, StorageRef, TensorArray, TensorData, TensorRef, Value,
 };
 
+use ndarray::{ArrayD, IxDyn};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use zip::read::ZipArchive;
 
 use extract::{contiguous_stride, extract_state_dict_tensors, numel};
 use iohash::{find_data_pkl_name, read_storage_blob, read_zip_entry, sha256_file, sha256_hex};
 use metadata::{collect_constructor_types, project_root_metadata};
 use parser::parse_pickle;
-use types::{ParsedCheckpoint, TensorData};
-use writer::{write_model_yaml, write_safetensors};
+use types::ParsedCheckpoint;
+use writer::{write_metadata_yaml, write_safetensors};
 
-pub fn inspect_pt(input_pt: &Path) -> Result<InspectionReport> {
-  let parsed = parse_checkpoint(input_pt, &ConvertOptions::default())?;
-  let mut tensors = Vec::with_capacity(parsed.tensors.len());
-  let mut total_tensor_bytes = 0usize;
-  for (name, tensor) in &parsed.tensors {
-    let nbytes = tensor.bytes.len();
-    total_tensor_bytes += nbytes;
-    tensors.push(TensorSummary {
-      name: name.clone(),
-      dtype: tensor.dtype.as_safetensors().to_string(),
-      shape: tensor.shape.clone(),
-      nbytes,
-    });
-  }
-
-  Ok(InspectionReport {
-    detected_format: "torch_zip_pickle".to_string(),
-    source_file: input_pt.display().to_string(),
-    source_sha256: parsed.source_sha256,
-    tensor_count: tensors.len(),
-    total_tensor_bytes,
-    tensors,
-    warnings: parsed.warnings,
-  })
+#[derive(Debug, Clone)]
+pub struct PtCheckpoint {
+  source_sha256: String,
+  warnings: Vec<String>,
+  metadata: CheckpointMetadata,
+  tensors: BTreeMap<String, TensorData>,
 }
 
-pub fn convert_pt_to_safetensors(
-  input_pt: &Path,
-  out_dir: &Path,
-  opts: ConvertOptions,
-) -> Result<ConvertResult> {
-  let parsed = parse_checkpoint(input_pt, &opts)?;
-  fs::create_dir_all(out_dir)?;
+impl PtCheckpoint {
+  pub fn from_pt(path: impl AsRef<Path>, opts: LoadOptions) -> Result<Self> {
+    let path = path.as_ref();
+    let parsed = parse_checkpoint(path, &opts)?;
+    let metadata = build_checkpoint_metadata(
+      path.display().to_string(),
+      parsed.source_sha256.clone(),
+      &parsed.metadata,
+      &parsed.objects,
+      &parsed.tensors,
+      "model.safetensors".to_string(),
+    );
 
-  let safetensors_path = out_dir.join("model.safetensors");
-  write_safetensors(&safetensors_path, &parsed.tensors, &parsed.source_sha256)?;
-
-  let mut total_tensor_bytes = 0usize;
-  let mut tensor_summaries = Vec::new();
-  for (name, tensor) in &parsed.tensors {
-    total_tensor_bytes += tensor.bytes.len();
-    tensor_summaries.push((
-      name.clone(),
-      tensor.dtype.as_safetensors().to_string(),
-      tensor.shape.clone(),
-      sha256_hex(&tensor.bytes),
-    ));
+    Ok(Self {
+      source_sha256: parsed.source_sha256,
+      warnings: parsed.warnings,
+      metadata,
+      tensors: parsed.tensors,
+    })
   }
 
-  let model_yaml_path = out_dir.join("model.yaml");
-  write_model_yaml(
-    &model_yaml_path,
-    input_pt,
-    &parsed.source_sha256,
-    parsed.tensors.len(),
-    total_tensor_bytes,
-    &parsed.metadata,
-    &parsed.objects,
-    &tensor_summaries,
-  )?;
+  pub fn from_metadata(metadata: CheckpointMetadata, source: ReconstructSource) -> Result<Self> {
+    let tensors = match source {
+      ReconstructSource::WeightsFile(path) => read_safetensors_tensors(&path)?,
+      ReconstructSource::StateDict(values) => values,
+    };
 
-  Ok(ConvertResult {
-    safetensors_path,
-    model_yaml_path,
-    source_file: input_pt.to_path_buf(),
-    source_sha256: parsed.source_sha256,
-    tensor_count: parsed.tensors.len(),
-    total_tensor_bytes,
-  })
+    validate_metadata_against_tensors(&metadata, &tensors)?;
+
+    Ok(Self {
+      source_sha256: metadata.source_sha256.clone(),
+      warnings: Vec::new(),
+      metadata,
+      tensors,
+    })
+  }
+
+  pub fn metadata(&self) -> &CheckpointMetadata {
+    &self.metadata
+  }
+
+  pub fn source_sha256(&self) -> &str {
+    &self.source_sha256
+  }
+
+  pub fn warnings(&self) -> &[String] {
+    &self.warnings
+  }
+
+  pub fn tensor_count(&self) -> usize {
+    self.tensors.len()
+  }
+
+  #[cfg(feature = "pyo3")]
+  pub(crate) fn raw_tensors(&self) -> &BTreeMap<String, TensorData> {
+    &self.tensors
+  }
+
+  pub fn state_dict(&self) -> Result<BTreeMap<String, TensorArray>> {
+    let mut out = BTreeMap::new();
+    for (name, tensor) in &self.tensors {
+      out.insert(name.clone(), tensor_data_to_array(tensor)?);
+    }
+    Ok(out)
+  }
+
+  pub fn export(&self, out_dir: impl AsRef<Path>, opts: ExportOptions) -> Result<ExportResult> {
+    match opts.format {
+      ExportFormat::Safetensors => {}
+    }
+
+    let out_dir = out_dir.as_ref();
+    fs::create_dir_all(out_dir)?;
+
+    let weights_path = out_dir.join(&opts.weights_filename);
+    if weights_path.exists() && !opts.overwrite {
+      return Err(ConvertError::InvalidStructure(format!(
+        "output already exists: {}",
+        weights_path.display()
+      )));
+    }
+
+    write_safetensors(&weights_path, &self.tensors, &self.source_sha256)?;
+
+    let metadata_path = if opts.include_metadata {
+      let metadata_path = out_dir.join(&opts.metadata_filename);
+      if metadata_path.exists() && !opts.overwrite {
+        return Err(ConvertError::InvalidStructure(format!(
+          "output already exists: {}",
+          metadata_path.display()
+        )));
+      }
+
+      let mut metadata = self.metadata.clone();
+      metadata.safetensors_file = opts.weights_filename.clone();
+      metadata.created_at_unix = now_unix_secs();
+      metadata.tensor_count = self.tensors.len();
+      metadata.total_tensor_bytes = total_tensor_bytes(&self.tensors);
+      metadata.tensors = tensor_summaries_for_metadata(&self.tensors);
+      write_metadata_yaml(&metadata_path, &metadata)?;
+      Some(metadata_path)
+    } else {
+      None
+    };
+
+    Ok(ExportResult {
+      weights_path,
+      metadata_path,
+      source_sha256: self.source_sha256.clone(),
+      tensor_count: self.tensors.len(),
+      total_tensor_bytes: total_tensor_bytes(&self.tensors),
+    })
+  }
 }
 
-pub fn parse_checkpoint(path: &Path, opts: &ConvertOptions) -> Result<ParsedCheckpoint> {
+pub(crate) fn parse_checkpoint(path: &Path, opts: &LoadOptions) -> Result<ParsedCheckpoint> {
   let file = File::open(path)?;
   let metadata = file.metadata()?;
   if metadata.len() > opts.max_archive_bytes {
@@ -200,9 +255,9 @@ pub fn parse_checkpoint(path: &Path, opts: &ConvertOptions) -> Result<ParsedChec
       .checked_add(byte_len)
       .ok_or_else(|| ConvertError::InvalidStructure("tensor slice overflow".to_string()))?;
 
-    let storage = storage_blobs.get(&tensor_ref.storage.key).ok_or_else(|| {
-      ConvertError::InvalidStructure(format!("missing storage blob {}", tensor_ref.storage.key))
-    })?;
+    let storage = storage_blobs
+      .get(&tensor_ref.storage.key)
+      .ok_or_else(|| ConvertError::InvalidStructure(format!("missing storage blob {}", tensor_ref.storage.key)))?;
     if end > storage.len() {
       return Err(ConvertError::InvalidStructure(format!(
         "tensor {} slice [{}, {}) is out of storage bounds {}",
@@ -225,6 +280,241 @@ pub fn parse_checkpoint(path: &Path, opts: &ConvertOptions) -> Result<ParsedChec
     metadata,
     objects,
   })
+}
+
+fn build_checkpoint_metadata(
+  source_file: String,
+  source_sha256: String,
+  metadata: &serde_yaml::Value,
+  objects: &[String],
+  tensors: &BTreeMap<String, TensorData>,
+  safetensors_file: String,
+) -> CheckpointMetadata {
+  CheckpointMetadata {
+    format_version: 1,
+    source_file,
+    source_sha256,
+    safetensors_file,
+    created_at_unix: now_unix_secs(),
+    tensor_count: tensors.len(),
+    total_tensor_bytes: total_tensor_bytes(tensors),
+    metadata: metadata.clone(),
+    objects: objects.to_vec(),
+    tensors: tensor_summaries_for_metadata(tensors),
+  }
+}
+
+fn tensor_summaries_for_metadata(tensors: &BTreeMap<String, TensorData>) -> Vec<CheckpointTensorMetadata> {
+  tensors
+    .iter()
+    .map(|(name, tensor)| CheckpointTensorMetadata {
+      name: name.clone(),
+      dtype: tensor.dtype.as_safetensors().to_string(),
+      shape: tensor.shape.clone(),
+      sha256: sha256_hex(&tensor.bytes),
+    })
+    .collect()
+}
+
+fn total_tensor_bytes(tensors: &BTreeMap<String, TensorData>) -> usize {
+  tensors.values().map(|tensor| tensor.bytes.len()).sum()
+}
+
+fn now_unix_secs() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|value| value.as_secs())
+    .unwrap_or(0)
+}
+
+fn validate_metadata_against_tensors(
+  metadata: &CheckpointMetadata,
+  tensors: &BTreeMap<String, TensorData>,
+) -> Result<()> {
+  if metadata.tensor_count != tensors.len() {
+    return Err(ConvertError::InvalidStructure(format!(
+      "metadata tensor_count={} does not match loaded tensor count={}",
+      metadata.tensor_count,
+      tensors.len()
+    )));
+  }
+
+  let tensor_bytes = total_tensor_bytes(tensors);
+  if metadata.total_tensor_bytes != tensor_bytes {
+    return Err(ConvertError::InvalidStructure(format!(
+      "metadata total_tensor_bytes={} does not match loaded tensor bytes={}",
+      metadata.total_tensor_bytes, tensor_bytes
+    )));
+  }
+
+  for item in &metadata.tensors {
+    let Some(tensor) = tensors.get(&item.name) else {
+      return Err(ConvertError::InvalidStructure(format!(
+        "metadata references missing tensor {}",
+        item.name
+      )));
+    };
+    if item.dtype != tensor.dtype.as_safetensors() {
+      return Err(ConvertError::InvalidStructure(format!(
+        "metadata dtype mismatch for {}: {} != {}",
+        item.name,
+        item.dtype,
+        tensor.dtype.as_safetensors()
+      )));
+    }
+    if item.shape != tensor.shape {
+      return Err(ConvertError::InvalidStructure(format!(
+        "metadata shape mismatch for {}",
+        item.name
+      )));
+    }
+    if item.sha256 != sha256_hex(&tensor.bytes) {
+      return Err(ConvertError::InvalidStructure(format!(
+        "metadata sha256 mismatch for {}",
+        item.name
+      )));
+    }
+  }
+
+  Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct SafetensorHeaderEntry {
+  dtype: String,
+  shape: Vec<usize>,
+  data_offsets: [usize; 2],
+}
+
+fn read_safetensors_tensors(path: &Path) -> Result<BTreeMap<String, TensorData>> {
+  let file_bytes = fs::read(path)?;
+  if file_bytes.len() < 8 {
+    return Err(ConvertError::InvalidStructure(
+      "safetensors file is too short".to_string(),
+    ));
+  }
+
+  let header_len = u64::from_le_bytes(file_bytes[0..8].try_into().expect("8-byte header"));
+  let header_len = header_len as usize;
+  if file_bytes.len() < 8 + header_len {
+    return Err(ConvertError::InvalidStructure(
+      "safetensors header is truncated".to_string(),
+    ));
+  }
+
+  let header_bytes = &file_bytes[8..8 + header_len];
+  let data = &file_bytes[8 + header_len..];
+  let header: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(header_bytes)?;
+
+  let mut tensors = BTreeMap::new();
+  for (name, value) in header {
+    if name == "__metadata__" {
+      continue;
+    }
+    let entry: SafetensorHeaderEntry = serde_json::from_value(value)?;
+    let Some(dtype) = DType::from_safetensors(&entry.dtype) else {
+      return Err(ConvertError::InvalidStructure(format!(
+        "unsupported safetensors dtype {}",
+        entry.dtype
+      )));
+    };
+
+    let start = entry.data_offsets[0];
+    let end = entry.data_offsets[1];
+    if end < start || end > data.len() {
+      return Err(ConvertError::InvalidStructure(format!(
+        "invalid data_offsets for tensor {}",
+        name
+      )));
+    }
+
+    let expected_size = numel(&entry.shape)?
+      .checked_mul(dtype.elem_size())
+      .ok_or_else(|| ConvertError::InvalidStructure("tensor byte length overflow".to_string()))?;
+    if end - start != expected_size {
+      return Err(ConvertError::InvalidStructure(format!(
+        "tensor {} bytes mismatch: {} != {}",
+        name,
+        end - start,
+        expected_size
+      )));
+    }
+
+    tensors.insert(
+      name,
+      TensorData {
+        dtype,
+        shape: entry.shape,
+        bytes: data[start..end].to_vec(),
+      },
+    );
+  }
+
+  if tensors.is_empty() {
+    return Err(ConvertError::InvalidStructure(
+      "no tensors found in safetensors file".to_string(),
+    ));
+  }
+
+  Ok(tensors)
+}
+
+fn tensor_data_to_array(tensor: &TensorData) -> Result<TensorArray> {
+  let shape = IxDyn(&tensor.shape);
+  match tensor.dtype {
+    DType::F16 | DType::BF16 => Err(ConvertError::InvalidStructure(
+      "f16/bf16 should be normalized to f32 before state_dict()".to_string(),
+    )),
+    DType::F32 => {
+      let values = bytes_to_vec::<4, f32>(&tensor.bytes, f32::from_le_bytes)?;
+      Ok(TensorArray::F32(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::F64 => {
+      let values = bytes_to_vec::<8, f64>(&tensor.bytes, f64::from_le_bytes)?;
+      Ok(TensorArray::F64(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::I8 => {
+      let values = tensor.bytes.iter().map(|v| *v as i8).collect::<Vec<_>>();
+      Ok(TensorArray::I8(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::I16 => {
+      let values = bytes_to_vec::<2, i16>(&tensor.bytes, i16::from_le_bytes)?;
+      Ok(TensorArray::I16(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::I32 => {
+      let values = bytes_to_vec::<4, i32>(&tensor.bytes, i32::from_le_bytes)?;
+      Ok(TensorArray::I32(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::I64 => {
+      let values = bytes_to_vec::<8, i64>(&tensor.bytes, i64::from_le_bytes)?;
+      Ok(TensorArray::I64(ArrayD::from_shape_vec(shape, values)?))
+    }
+    DType::U8 => Ok(TensorArray::U8(ArrayD::from_shape_vec(shape, tensor.bytes.clone())?)),
+    DType::Bool => {
+      let values = tensor.bytes.iter().map(|v| *v != 0).collect::<Vec<_>>();
+      Ok(TensorArray::Bool(ArrayD::from_shape_vec(shape, values)?))
+    }
+  }
+}
+
+fn bytes_to_vec<const N: usize, T>(bytes: &[u8], f: impl Fn([u8; N]) -> T) -> Result<Vec<T>> {
+  if bytes.len() % N != 0 {
+    return Err(ConvertError::InvalidStructure(format!(
+      "tensor bytes are not divisible by {}",
+      N
+    )));
+  }
+
+  Ok(
+    bytes
+      .chunks_exact(N)
+      .map(|chunk| {
+        let mut arr = [0u8; N];
+        arr.copy_from_slice(chunk);
+        f(arr)
+      })
+      .collect(),
+  )
 }
 
 fn normalize_tensor_dtype(dtype: DType, shape: Vec<usize>, bytes: Vec<u8>) -> Result<TensorData> {
@@ -302,7 +592,6 @@ fn f16_bits_to_f32(bits: u16) -> f32 {
   f32::from_bits(f32_bits)
 }
 
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -320,16 +609,18 @@ mod tests {
     write_fixture_checkpoint(&pt_path, false).expect("fixture checkpoint");
 
     let out_dir = tmp.path().join("export");
-    let result = convert_pt_to_safetensors(&pt_path, &out_dir, ConvertOptions::default())
-      .expect("conversion should work");
+    let checkpoint = PtCheckpoint::from_pt(&pt_path, LoadOptions::default()).expect("checkpoint load should work");
+    let result = checkpoint
+      .export(&out_dir, ExportOptions::default())
+      .expect("export should work");
 
-    assert!(result.safetensors_path.exists());
-    assert!(result.model_yaml_path.exists());
+    assert!(result.weights_path.exists());
+    assert!(result.metadata_path.as_ref().expect("metadata path").exists());
     assert_eq!(result.tensor_count, 1);
 
-    let yaml = fs::read_to_string(result.model_yaml_path).expect("yaml readable");
+    let yaml = fs::read_to_string(result.metadata_path.expect("metadata path")).expect("yaml readable");
     assert!(yaml.contains("layer.weight"));
-    assert!(yaml.contains("dtype: 'F32'"));
+    assert!(yaml.contains("dtype: F32") || yaml.contains("dtype: 'F32'"));
   }
 
   #[test]
@@ -338,8 +629,7 @@ mod tests {
     let pt_path = tmp.path().join("unsafe.pt");
     write_fixture_checkpoint(&pt_path, true).expect("fixture checkpoint");
 
-    let err = convert_pt_to_safetensors(&pt_path, tmp.path(), ConvertOptions::default())
-      .expect_err("unsafe pickle should fail");
+    let err = PtCheckpoint::from_pt(&pt_path, LoadOptions::default()).expect_err("unsafe pickle should fail");
     let msg = err.to_string();
     assert!(msg.contains("unsupported GLOBAL") || msg.contains("unsafe/unsupported pickle"));
   }
@@ -429,10 +719,7 @@ mod tests {
     ]);
 
     let objects = collect_constructor_types(&tree);
-    assert_eq!(
-      objects,
-      vec!["a.One".to_string(), "b.Two".to_string()]
-    );
+    assert_eq!(objects, vec!["a.One".to_string(), "b.Two".to_string()]);
   }
 
   fn write_fixture_checkpoint(path: &Path, unsafe_payload: bool) -> Result<()> {

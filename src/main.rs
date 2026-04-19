@@ -1,4 +1,4 @@
-use pt_loader::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
+use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
 use std::env;
 use std::path::PathBuf;
 
@@ -24,8 +24,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("inspect requires exactly one argument: <input.pt>".into());
       }
       let input = PathBuf::from(&args[0]);
-      let report = inspect_pt(&input)?;
-      println!("{}", serde_json::to_string_pretty(&report)?);
+      let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default())?;
+      println!("{}", serde_json::to_string_pretty(checkpoint.metadata())?);
       Ok(())
     }
     "convert" => {
@@ -51,7 +51,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
       }
 
-      let result = convert_pt_to_safetensors(&input, &out_dir, ConvertOptions::default())?;
+      let checkpoint = PtCheckpoint::from_pt(&input, LoadOptions::default())?;
+      let result = checkpoint.export(&out_dir, ExportOptions::default())?;
       println!("{}", serde_json::to_string_pretty(&result)?);
       Ok(())
     }

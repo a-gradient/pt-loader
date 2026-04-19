@@ -1,33 +1,53 @@
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
+
 from numpy.typing import NDArray
 
 
-def inspect(input_pt: str) -> dict[str, Any]: ...
+class PtCheckpoint:
+  @classmethod
+  def from_pt(
+    cls,
+    pt_path: str | Path,
+    *,
+    max_archive_bytes: int | None = None,
+    max_tensor_count: int | None = None,
+    max_tensor_bytes: int | None = None,
+    max_pickle_bytes: int | None = None,
+    strict_contiguous: bool | None = None,
+  ) -> PtCheckpoint: ...
 
+  @classmethod
+  def from_metadata(
+    cls,
+    metadata: dict[str, Any] | str | Path,
+    *,
+    state_dict: dict[str, Any] | None = None,
+    weights_path: str | Path | None = None,
+    backend: Literal["numpy", "torch"] = "numpy",
+  ) -> PtCheckpoint: ...
 
-def convert(
-  input_pt: str,
-  out_dir: str = "out",
-  *,
-  max_archive_bytes: int | None = None,
-  max_tensor_count: int | None = None,
-  max_tensor_bytes: int | None = None,
-  max_pickle_bytes: int | None = None,
-  strict_contiguous: bool | None = None,
-) -> dict[str, Any]: ...
+  def export(
+    self,
+    out_dir: str | Path,
+    *,
+    format: Literal["safetensors"] = "safetensors",
+    weights_filename: str = "model.safetensors",
+    metadata_filename: str = "model.yaml",
+    include_metadata: bool = True,
+    overwrite: bool = False,
+  ) -> dict[str, Any]: ...
 
+  def state_dict(
+    self,
+    *,
+    backend: Literal["numpy", "torch"] = "numpy",
+    copy: bool = True,
+  ) -> dict[str, NDArray[Any] | Any]: ...
 
-def load_pt(
-  input_pt: str,
-  *,
-  max_archive_bytes: int | None = None,
-  max_tensor_count: int | None = None,
-  max_tensor_bytes: int | None = None,
-  max_pickle_bytes: int | None = None,
-  strict_contiguous: bool | None = None,
-) -> dict[str, NDArray[Any]]: ...
+  def metadata(self) -> dict[str, Any]: ...
 
 
 __version__: str

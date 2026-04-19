@@ -1,4 +1,4 @@
-use pt_loader::{convert_pt_to_safetensors, ConvertOptions};
+use pt_loader::{LoadOptions, PtCheckpoint};
 use std::fs::File;
 use std::io::Write;
 use tempfile::tempdir;
@@ -11,8 +11,7 @@ fn rejects_non_zip_pt() {
   let pt = dir.path().join("legacy.pt");
   std::fs::write(&pt, b"not a zip checkpoint").expect("write");
 
-  let err =
-    convert_pt_to_safetensors(&pt, dir.path(), ConvertOptions::default()).expect_err("should fail");
+  let err = PtCheckpoint::from_pt(&pt, LoadOptions::default()).expect_err("should fail");
   assert!(err.to_string().contains("torch zip checkpoints"));
 }
 
@@ -33,11 +32,11 @@ fn enforces_pickle_size_limit() {
   zip.write_all(&[0u8; 16]).expect("write data");
   zip.finish().expect("finish");
 
-  let opts = ConvertOptions {
+  let opts = LoadOptions {
     max_pickle_bytes: 32,
-    ..ConvertOptions::default()
+    ..LoadOptions::default()
   };
 
-  let err = convert_pt_to_safetensors(&pt, dir.path(), opts).expect_err("should fail");
+  let err = PtCheckpoint::from_pt(&pt, opts).expect_err("should fail");
   assert!(err.to_string().contains("data.pkl"));
 }

@@ -22,30 +22,22 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
     Value::Float(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
     Value::String(v) => serde_yaml::Value::String(v.clone()),
     Value::Bytes(v) => serde_yaml::Value::String(format!("0x{}", bytes_to_hex(v))),
-    Value::List(items) | Value::Tuple(items) | Value::Set(items) => serde_yaml::Value::Sequence(
-      items.iter().map(project_value_for_metadata).collect(),
-    ),
+    Value::List(items) | Value::Tuple(items) | Value::Set(items) => {
+      serde_yaml::Value::Sequence(items.iter().map(project_value_for_metadata).collect())
+    }
     Value::Dict(entries) => serde_yaml::Value::Mapping(
       entries
         .iter()
         .map(|(k, v)| {
           let key = key_as_string(k).unwrap_or_else(|| "<non-string-key>".to_string());
-          (
-            serde_yaml::Value::String(key),
-            project_value_for_metadata(v),
-          )
+          (serde_yaml::Value::String(key), project_value_for_metadata(v))
         })
         .collect(),
     ),
     Value::OrderedDict(entries) => serde_yaml::Value::Mapping(
       entries
         .iter()
-        .map(|(k, v)| {
-          (
-            serde_yaml::Value::String(k.clone()),
-            project_value_for_metadata(v),
-          )
-        })
+        .map(|(k, v)| (serde_yaml::Value::String(k.clone()), project_value_for_metadata(v)))
         .collect(),
     ),
     Value::Global { module, name } => serde_yaml::Value::String(format!("{module}.{name}")),

@@ -21,30 +21,26 @@ uv run pytest -q
 Example:
 
 ```python
-import pt_loader
+from pt_loader import PtCheckpoint
 
-report = pt_loader.inspect("samples/yolo26n.pt")
-print(report["tensor_count"])
+ckpt = PtCheckpoint.from_pt("samples/yolo26n.pt")
+print(ckpt.metadata()["tensor_count"])
 
-result = pt_loader.convert("samples/yolo26n.pt", out_dir="out")
-print(result["safetensors_path"])
+result = ckpt.export("out")
+print(result["weights_path"])
 
-tensors = pt_loader.load_pt("samples/yolo26n.pt")
+tensors = ckpt.state_dict(backend="numpy")
 print(next(iter(tensors.values())).shape)
 ```
 
 ## Rust Usage
 
 ```rust
-use pt_loader::{convert_pt_to_safetensors, inspect_pt, ConvertOptions};
-use std::path::Path;
+use pt_loader::{ExportOptions, LoadOptions, PtCheckpoint};
 
-let report = inspect_pt(Path::new("samples/yolo26n.pt"))?;
-let result = convert_pt_to_safetensors(
-    Path::new("samples/yolo26n.pt"),
-    Path::new("out"),
-    ConvertOptions::default(),
-)?;
+let ckpt = PtCheckpoint::from_pt("samples/yolo26n.pt", LoadOptions::default())?;
+let result = ckpt.export("out", ExportOptions::default())?;
+println!("{}", result.weights_path.display());
 ```
 
 ## Development

@@ -19,16 +19,6 @@ class PtCheckpoint:
     strict_contiguous: bool | None = None,
   ) -> PtCheckpoint: ...
 
-  @classmethod
-  def from_metadata(
-    cls,
-    metadata: dict[str, Any] | str | Path,
-    *,
-    state_dict: dict[str, Any] | None = None,
-    weights_path: str | Path | None = None,
-    backend: Literal["numpy", "torch"] = "numpy",
-  ) -> PtCheckpoint: ...
-
   def export(
     self,
     filename: str | Path | None = None,

@@ -19,18 +19,6 @@ _DTYPE_TO_NUMPY: dict[str, str] = {
   "BOOL": "bool",
 }
 
-_NUMPY_TO_DTYPE: dict[str, str] = {
-  "float16": "F16",
-  "float32": "F32",
-  "float64": "F64",
-  "int8": "I8",
-  "int16": "I16",
-  "int32": "I32",
-  "int64": "I64",
-  "uint8": "U8",
-  "bool": "BOOL",
-}
-
 _FORMAT_TO_EXT: dict[str, str] = {
   "safetensors": ".safetensors",
 }
@@ -66,33 +54,6 @@ class PtCheckpoint:
       strict_contiguous=strict_contiguous,
     )
     return cls(core, input_path=pt_path_obj)
-
-  @classmethod
-  def from_metadata(
-    cls,
-    metadata: dict[str, Any] | str | Path,
-    *,
-    state_dict: dict[str, Any] | None = None,
-    weights_path: str | Path | None = None,
-    backend: str = "numpy",
-  ) -> "PtCheckpoint":
-    metadata_yaml = _metadata_to_yaml(metadata)
-
-    if state_dict is not None and weights_path is not None:
-      raise ValueError("provide either state_dict or weights_path, not both")
-    if state_dict is None and weights_path is None:
-      raise ValueError("one of state_dict or weights_path is required")
-
-    payload = None
-    if state_dict is not None:
-      payload = _state_dict_to_raw_payload(state_dict, backend=backend)
-
-    core = PtCheckpointCore.from_metadata_yaml(
-      metadata_yaml,
-      weights_path=None if weights_path is None else str(weights_path),
-      state_dict=payload,
-    )
-    return cls(core, input_path=None)
 
   def export(
     self,
@@ -191,63 +152,6 @@ class PtCheckpoint:
       final_weights_path = Path.cwd() / filename_path
 
     return resolved_format, final_weights_path
-
-
-
-def _metadata_to_yaml(metadata: dict[str, Any] | str | Path) -> str:
-  if isinstance(metadata, dict):
-    return json.dumps(metadata)
-
-  if isinstance(metadata, Path):
-    return metadata.read_text(encoding="utf-8")
-
-  maybe_path = Path(metadata)
-  if maybe_path.exists():
-    return maybe_path.read_text(encoding="utf-8")
-  return metadata
-
-
-
-def _state_dict_to_raw_payload(state_dict: dict[str, Any], *, backend: str) -> dict[str, Any]:
-  if backend == "numpy":
-    import numpy as np
-
-    payload: dict[str, Any] = {}
-    for name, tensor in state_dict.items():
-      arr = np.asarray(tensor)
-      payload[name] = _numpy_tensor_payload(arr)
-    return payload
-
-  if backend == "torch":
-    import torch
-
-    payload = {}
-    for name, tensor in state_dict.items():
-      if isinstance(tensor, torch.Tensor):
-        arr = tensor.detach().cpu().numpy()
-      else:
-        arr = torch.as_tensor(tensor).detach().cpu().numpy()
-      payload[name] = _numpy_tensor_payload(arr)
-    return payload
-
-  raise ValueError("backend must be 'numpy' or 'torch'")
-
-
-
-def _numpy_tensor_payload(array: "Any") -> dict[str, Any]:
-  import numpy as np
-
-  arr = np.ascontiguousarray(array)
-  dtype_name = str(arr.dtype)
-  if dtype_name not in _NUMPY_TO_DTYPE:
-    raise ValueError(f"unsupported dtype for from_metadata state_dict: {dtype_name}")
-
-  return {
-    "dtype": _NUMPY_TO_DTYPE[dtype_name],
-    "shape": list(arr.shape),
-    "data": arr.tobytes(order="C"),
-  }
-
 
 def _normalize_export_format(value: str | None) -> str:
   if value is None:

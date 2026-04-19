@@ -71,20 +71,3 @@ def test_state_dict_returns_numpy_tensors() -> None:
   assert isinstance(first, np.ndarray)
   assert first.size > 0
 
-
-def test_roundtrip_from_metadata_with_state_dict() -> None:
-  ckpt = mc.PtCheckpoint.load(_sample_path("yolo26n.pt"))
-  metadata = ckpt.metadata()
-  tensors = ckpt.state_dict(backend="numpy")
-
-  reconstructed = mc.PtCheckpoint.from_metadata(
-    metadata,
-    state_dict=tensors,
-    backend="numpy",
-  )
-
-  reconstructed_tensors = reconstructed.state_dict(backend="numpy")
-  assert reconstructed_tensors.keys() == tensors.keys()
-
-  first_name = next(iter(tensors.keys()))
-  assert reconstructed_tensors[first_name].shape == tensors[first_name].shape

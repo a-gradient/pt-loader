@@ -120,13 +120,11 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
         serde_yaml::Value::String("$class".to_string()),
         serde_yaml::Value::String(format!("{module}.{name}")),
       );
-      if let Some(args) = args {
-        if !is_empty_args(args) {
-          map.insert(
-            serde_yaml::Value::String("$args".to_string()),
-            project_value_for_metadata(args),
-          );
-        }
+      if !is_empty_args(args) {
+        map.insert(
+          serde_yaml::Value::String("$args".to_string()),
+          serde_yaml::Value::Sequence(args.iter().map(project_value_for_metadata).collect()),
+        );
       }
       if let Some(state) = state {
         let projected_state = project_value_for_metadata(state);
@@ -144,35 +142,33 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
       }
       serde_yaml::Value::Mapping(map)
     }
-    Value::Call { func, args } => serde_yaml::Value::Mapping(
-      [
-        (
-          serde_yaml::Value::String("$type".to_string()),
-          serde_yaml::Value::String("call".to_string()),
-        ),
-        (
-          serde_yaml::Value::String("$func".to_string()),
-          serde_yaml::Value::String(func.clone()),
-        ),
-        (
-          serde_yaml::Value::String("$args".to_string()),
-          serde_yaml::Value::Sequence(args.iter().map(project_value_for_metadata).collect()),
-        ),
-      ]
-      .into_iter()
-      .collect(),
-    ),
+    Value::Call { func, args, state } => {
+      let mut map = serde_yaml::Mapping::new();
+      map.insert(
+        serde_yaml::Value::String("$type".to_string()),
+        serde_yaml::Value::String("call".to_string()),
+      );
+      map.insert(
+        serde_yaml::Value::String("$func".to_string()),
+        serde_yaml::Value::String(func.clone()),
+      );
+      map.insert(
+        serde_yaml::Value::String("$args".to_string()),
+        serde_yaml::Value::Sequence(args.iter().map(project_value_for_metadata).collect()),
+      );
+      if let Some(state) = state {
+        let projected_state = project_value_for_metadata(state);
+        if !matches!(projected_state, serde_yaml::Value::Null) {
+          map.insert(serde_yaml::Value::String("$state".to_string()), projected_state);
+        }
+      }
+      serde_yaml::Value::Mapping(map)
+    }
   }
 }
 
-fn is_empty_args(value: &Value) -> bool {
-  match value {
-    Value::None => true,
-    Value::Tuple(items) | Value::List(items) | Value::Set(items) => items.is_empty(),
-    Value::Dict(entries) => entries.is_empty(),
-    Value::OrderedDict(entries) => entries.is_empty(),
-    _ => false,
-  }
+fn is_empty_args(args: &[Value]) -> bool {
+  args.is_empty()
 }
 
 pub(crate) fn collect_constructor_types(root: &Value) -> Vec<String> {
@@ -198,16 +194,19 @@ fn collect_constructor_types_inner(
       if seen.insert(ty.clone()) {
         out.push(ty);
       }
-      if let Some(args) = args {
-        collect_constructor_types_inner(args, seen, out);
+      for arg in args {
+        collect_constructor_types_inner(arg, seen, out);
       }
       if let Some(state) = state {
         collect_constructor_types_inner(state, seen, out);
       }
     }
-    Value::Call { args, .. } => {
+    Value::Call { args, state, .. } => {
       for item in args {
         collect_constructor_types_inner(item, seen, out);
+      }
+      if let Some(state) = state {
+        collect_constructor_types_inner(state, seen, out);
       }
     }
     Value::Dict(entries) => {

@@ -420,6 +420,7 @@ impl<'a> PickleParser<'a> {
       _ => Ok(Value::Call {
         func: format!("{module}.{name}"),
         args,
+        state: None,
       }),
     }
   }
@@ -439,7 +440,7 @@ impl<'a> PickleParser<'a> {
       _ => Ok(Value::Object {
         module,
         name,
-        args: Some(Box::new(Value::Tuple(_args))),
+        args: _args,
         state: None,
       }),
     }
@@ -452,6 +453,11 @@ impl<'a> PickleParser<'a> {
       (Value::Object { module, name, args, .. }, state) => Ok(Value::Object {
         module,
         name,
+        args,
+        state: Some(Box::new(state)),
+      }),
+      (Value::Call { func, args, .. }, state) => Ok(Value::Call {
+        func,
         args,
         state: Some(Box::new(state)),
       }),

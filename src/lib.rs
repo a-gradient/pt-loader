@@ -639,10 +639,10 @@ mod tests {
     let value = Value::Object {
       module: "ultralytics.nn.tasks".to_string(),
       name: "DetectionModel".to_string(),
-      args: Some(Box::new(Value::Tuple(vec![
+      args: vec![
         Value::String("arg0".to_string()),
         Value::Int(42),
-      ]))),
+      ],
       state: Some(Box::new(Value::Dict(vec![(
         Value::String("training".to_string()),
         Value::Bool(false),
@@ -679,7 +679,7 @@ mod tests {
     let value = Value::Object {
       module: "a".to_string(),
       name: "B".to_string(),
-      args: Some(Box::new(Value::Tuple(Vec::new()))),
+      args: Vec::new(),
       state: None,
     };
     let projected = project_value_for_metadata(&value);
@@ -698,7 +698,7 @@ mod tests {
       Value::Object {
         module: "a".to_string(),
         name: "One".to_string(),
-        args: None,
+        args: Vec::new(),
         state: None,
       },
       Value::Dict(vec![(
@@ -706,14 +706,14 @@ mod tests {
         Value::Object {
           module: "b".to_string(),
           name: "Two".to_string(),
-          args: None,
+          args: Vec::new(),
           state: None,
         },
       )]),
       Value::Object {
         module: "a".to_string(),
         name: "One".to_string(),
-        args: None,
+        args: Vec::new(),
         state: None,
       },
     ]);
@@ -727,6 +727,7 @@ mod tests {
     let value = Value::Call {
       func: "ultralytics.utils.IterableSimpleNamespace".to_string(),
       args: vec![Value::String("x".to_string()), Value::Int(1)],
+      state: None,
     };
 
     let projected = project_value_for_metadata(&value);
@@ -752,6 +753,27 @@ mod tests {
       mapping.get(&args_key),
       Some(serde_yaml::Value::Sequence(items)) if items.len() == 2
     ));
+  }
+
+  #[test]
+  fn projects_call_metadata_with_state() {
+    let value = Value::Call {
+      func: "ultralytics.utils.IterableSimpleNamespace".to_string(),
+      args: vec![Value::String("x".to_string())],
+      state: Some(Box::new(Value::Dict(vec![(
+        Value::String("k".to_string()),
+        Value::String("v".to_string()),
+      )]))),
+    };
+
+    let projected = project_value_for_metadata(&value);
+    let mapping = match projected {
+      serde_yaml::Value::Mapping(map) => map,
+      other => panic!("expected mapping, got {:?}", other),
+    };
+
+    let state_key = serde_yaml::Value::String("$state".to_string());
+    assert!(matches!(mapping.get(&state_key), Some(serde_yaml::Value::Mapping(_))));
   }
 
   fn write_fixture_checkpoint(path: &Path, unsafe_payload: bool) -> Result<()> {

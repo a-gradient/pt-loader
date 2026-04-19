@@ -297,11 +297,12 @@ pub enum Value {
   Call {
     func: String,
     args: Vec<Value>,
+    state: Option<Box<Value>>,
   },
   Object {
     module: String,
     name: String,
-    args: Option<Box<Value>>,
+    args: Vec<Value>,
     state: Option<Box<Value>>,
   },
 }

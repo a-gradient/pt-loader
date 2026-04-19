@@ -40,3 +40,23 @@ fn enforces_pickle_size_limit() {
   let err = PtCheckpoint::load(&pt, opts).expect_err("should fail");
   assert!(err.to_string().contains("data.pkl"));
 }
+
+#[test]
+fn sample_last_pt_no_longer_fails_on_call_build_state() {
+  let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+  let path = crate_root.join("samples").join("last.pt");
+  if !path.exists() {
+    return;
+  }
+
+  let err = match PtCheckpoint::load(&path, LoadOptions::default()) {
+    Ok(_) => return,
+    Err(err) => err,
+  };
+  assert!(
+    !err
+      .to_string()
+      .contains("BUILD with non-empty state is not supported"),
+    "regression: parser still fails with unsupported call BUILD state"
+  );
+}

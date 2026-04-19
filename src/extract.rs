@@ -47,16 +47,19 @@ fn collect_largest_tensor_map(value: &Value, best: &mut BTreeMap<String, TensorR
       }
     }
     Value::Object { args, state, .. } => {
-      if let Some(args) = args {
-        collect_largest_tensor_map(args, best);
+      for arg in args {
+        collect_largest_tensor_map(arg, best);
       }
       if let Some(state) = state {
         collect_largest_tensor_map(state, best);
       }
     }
-    Value::Call { args, .. } => {
+    Value::Call { args, state, .. } => {
       for child in args {
         collect_largest_tensor_map(child, best);
+      }
+      if let Some(state) = state {
+        collect_largest_tensor_map(state, best);
       }
     }
     _ => {}
@@ -105,10 +108,13 @@ fn collect_module_state_tensors(value: &Value, prefix: &str, out: &mut BTreeMap<
         collect_module_state_tensors(child, &next_prefix, out);
       }
     }
-    Value::Call { args, .. } => {
+    Value::Call { args, state, .. } => {
       for (idx, child) in args.iter().enumerate() {
         let next_prefix = join_name(prefix, &idx.to_string());
         collect_module_state_tensors(child, &next_prefix, out);
+      }
+      if let Some(state) = state {
+        collect_module_state_tensors(state, prefix, out);
       }
     }
     _ => {}

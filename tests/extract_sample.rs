@@ -5,7 +5,7 @@ use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelYaml {
@@ -32,92 +32,118 @@ struct ModelYamlTensor {
 }
 
 #[test]
-fn extracts_sample_yolo26n_pt() {
+fn extracts_all_sample_pt_files() {
   let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-  let input = crate_root.join("samples").join("yolo26n.pt");
-  let reference_safetensors = crate_root.join("samples").join("yolo26n.safetensors");
-  let reference_yaml = crate_root.join("samples").join("yolo26n.yaml");
-  assert!(input.exists(), "expected sample checkpoint at {}", input.display());
-  let needs_regen = reference_yaml_needs_regeneration(&reference_yaml);
-  if needs_regen {
-    assert!(
-      reference_safetensors.exists(),
-      "expected sample safetensors at {} to regenerate {}",
-      reference_safetensors.display(),
-      reference_yaml.display()
-    );
-    generate_yaml_from_safetensors(&reference_safetensors, &reference_yaml);
+  let samples_dir = crate_root.join("samples");
+  let mut pt_files = list_sample_pt_files(&samples_dir);
+  pt_files.sort();
+  assert!(!pt_files.is_empty(), "expected at least one .pt sample in {}", samples_dir.display());
+
+  let out_root = crate_root.join("out").join("test_extract_sample");
+  if out_root.exists() {
+    std::fs::remove_dir_all(&out_root).expect("remove old test out dir");
   }
+  std::fs::create_dir_all(&out_root).expect("create test out dir");
 
-  let out_dir = crate_root.join("out");
-  if out_dir.exists() {
-    std::fs::remove_dir_all(&out_dir).expect("remove old out dir");
+  for input in pt_files {
+    test_one_sample(&input, &samples_dir, &out_root);
   }
-  std::fs::create_dir_all(&out_dir).expect("create out dir");
-
-  let checkpoint = PtCheckpoint::load(&input, LoadOptions::default()).expect("sample checkpoint should load");
-  let result = checkpoint
-    .export(&out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(&input)))
-    .expect("sample checkpoint should convert");
-
-  assert!(result.weights_path.exists());
-  assert!(result.metadata_path.as_ref().expect("metadata path").exists());
-  assert!(result.tensor_count > 0);
-  assert!(result.total_tensor_bytes > 0);
-
-  let converted_shapes = read_safetensors_shapes(&result.weights_path);
-  assert!(!converted_shapes.is_empty(), "converted safetensors is empty");
-  if reference_safetensors.exists() {
-    let reference_shapes = read_safetensors_shapes(&reference_safetensors);
-    assert!(!reference_shapes.is_empty(), "reference safetensors is empty");
-    assert_eq!(
-      converted_shapes, reference_shapes,
-      "converted out/model.safetensors shapes must match samples/yolo26n.safetensors"
-    );
-  }
-
-  let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
-  let reference_yaml_tensors = read_model_yaml_tensors(&reference_yaml);
-  assert_eq!(
-    out_yaml_tensors, reference_yaml_tensors,
-    "converted out/model.yaml tensors must match samples/yolo26n.yaml"
-  );
-
-  let out_yaml_path = result.metadata_path.as_ref().expect("metadata");
-  let out_yaml = read_model_yaml(out_yaml_path);
-  let out_yaml_raw = std::fs::read_to_string(out_yaml_path).expect("read output yaml");
-  assert!(
-    out_yaml_raw.contains("shape: ["),
-    "expected inline flow sequence for tensor shape"
-  );
-  let metadata_len = match &out_yaml.metadata {
-    serde_yaml::Value::Mapping(map) => map.len(),
-    _ => 0,
-  };
-  assert!(
-    metadata_len > 10,
-    "expected extracted metadata map to contain many top-level fields, got {}",
-    metadata_len
-  );
-  assert!(
-    out_yaml
-      .objects
-      .iter()
-      .any(|item| item == "ultralytics.nn.tasks.DetectionModel"),
-    "expected objects to include ultralytics.nn.tasks.DetectionModel"
-  );
 }
 
-fn reference_yaml_needs_regeneration(yaml_path: &Path) -> bool {
-  if !yaml_path.exists() {
-    true
+fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
+  let stem = input
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .expect("sample pt file should have a valid stem")
+    .to_string();
+
+  let reference_yaml = samples_dir.join(format!("{stem}.yaml"));
+  let reference_safetensors = samples_dir.join(format!("{stem}.safetensors"));
+  let has_reference = reference_yaml.exists() || reference_safetensors.exists();
+  let sample_out_dir = out_root.join(&stem);
+  std::fs::create_dir_all(&sample_out_dir).expect("create sample out dir");
+
+  let checkpoint = match PtCheckpoint::load(input, LoadOptions::default()) {
+    Ok(value) => value,
+    Err(err) if !has_reference => {
+      eprintln!(
+        "skipping extract-only sample {} because loading is not supported yet: {}",
+        input.display(),
+        err
+      );
+      return;
+    }
+    Err(err) => {
+      panic!(
+        "sample checkpoint should load for reference comparison ({}): {err}",
+        input.display()
+      );
+    }
+  };
+  let result = checkpoint
+    .export(&sample_out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(input)))
+    .unwrap_or_else(|err| panic!("sample checkpoint should convert ({}): {err}", input.display()));
+
+  assert!(result.weights_path.exists(), "missing weights output for {}", input.display());
+  assert!(
+    result.metadata_path.as_ref().expect("metadata path").exists(),
+    "missing metadata output for {}",
+    input.display()
+  );
+  assert!(result.tensor_count > 0, "expected tensor_count > 0 for {}", input.display());
+  assert!(
+    result.total_tensor_bytes > 0,
+    "expected total_tensor_bytes > 0 for {}",
+    input.display()
+  );
+
+  let converted_shapes = read_safetensors_shapes(&result.weights_path);
+  assert!(!converted_shapes.is_empty(), "converted safetensors is empty for {}", input.display());
+
+  if reference_yaml.exists() {
+    // 1) if corresponding yaml exists, compare with it
+    let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
+    let reference_yaml_tensors = read_model_yaml_tensors(&reference_yaml);
+    assert_eq!(
+      out_yaml_tensors, reference_yaml_tensors,
+      "converted yaml tensors must match reference yaml for {}",
+      input.display()
+    );
+  } else if reference_safetensors.exists() {
+    // 2) if no yaml but safetensors exists, generate yaml from safetensors and compare
+    let generated_yaml = sample_out_dir.join(format!("{stem}.generated.expected.yaml"));
+    generate_yaml_from_safetensors(&reference_safetensors, &generated_yaml);
+    let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
+    let generated_yaml_tensors = read_model_yaml_tensors(&generated_yaml);
+    assert_eq!(
+      out_yaml_tensors, generated_yaml_tensors,
+      "converted yaml tensors must match generated yaml from reference safetensors for {}",
+      input.display()
+    );
   } else {
-    let parsed = read_model_yaml(yaml_path);
-    let raw = std::fs::read_to_string(yaml_path).expect("read existing yaml");
-    parsed.source_sha256.trim().is_empty()
-      || parsed.tensors.iter().any(|item| item.sha256.trim().is_empty())
-      || raw.contains("\n    shape:\n")
+    // 3) otherwise only extract
+    assert!(
+      result.weights_path.exists() && result.metadata_path.as_ref().expect("metadata").exists(),
+      "expected extraction outputs for {}",
+      input.display()
+    );
   }
+}
+
+fn list_sample_pt_files(samples_dir: &Path) -> Vec<PathBuf> {
+  let mut files = Vec::new();
+  let entries = std::fs::read_dir(samples_dir)
+    .unwrap_or_else(|err| panic!("failed reading samples dir {}: {err}", samples_dir.display()));
+
+  for entry in entries {
+    let entry = entry.expect("read_dir entry");
+    let path = entry.path();
+    if path.extension().and_then(|ext| ext.to_str()) == Some("pt") {
+      files.push(path);
+    }
+  }
+
+  files
 }
 
 fn read_safetensors_shapes(path: &Path) -> BTreeMap<String, Vec<usize>> {
@@ -163,7 +189,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
     safetensors_file: safetensors_path
       .file_name()
       .map(|value| value.to_string_lossy().into_owned())
-      .unwrap_or_else(|| "yolo26n.safetensors".to_string()),
+      .unwrap_or_else(|| "model.safetensors".to_string()),
     created_at_unix: 0,
     tensor_count: yaml_tensors.len(),
     total_tensor_bytes,

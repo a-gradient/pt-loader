@@ -22,9 +22,12 @@ jobs:
 
       - name: Authenticate
         uses: rust-lang/crates-io-auth-action@v1
+        id: auth
 
       - name: Publish crate
         run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   build-wheels:
     name: Build Wheels (${{ matrix.os }})

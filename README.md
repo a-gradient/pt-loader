@@ -1,5 +1,12 @@
 # pt-loader
 
+[![CI](https://github.com/a-gradient/pt-loader/actions/workflows/ci.yml/badge.svg)](https://github.com/a-gradient/pt-loader/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/pt-loader.svg)](https://crates.io/crates/pt-loader)
+[![docs.rs](https://img.shields.io/docsrs/pt-loader)](https://docs.rs/pt-loader)
+[![PyPI](https://img.shields.io/pypi/v/pt-safe-loader.svg)](https://pypi.org/project/pt-safe-loader/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/pt-safe-loader.svg)](https://pypi.org/project/pt-safe-loader/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Safe parser-based PyTorch checkpoint converter to safetensors with both Rust and Python APIs.
 
 ## Active Development Notice
@@ -13,14 +20,33 @@ Safe parser-based PyTorch checkpoint converter to safetensors with both Rust and
 - Inspects checkpoint metadata and tensor summaries.
 - Loads tensors directly into Python as NumPy arrays.
 
-## Python Usage
+## Installation
+
+### Python
+
+Install from PyPI:
+
+```bash
+pip install pt-safe-loader
+```
 
 Install from source (local repo):
 
 ```bash
 uv sync --group dev
-uv run pytest -q
+uv run maturin develop --features pyo3
 ```
+
+### Rust
+
+Add dependency:
+
+```toml
+[dependencies]
+pt-loader = "0.1"
+```
+
+## Python Usage
 
 Example:
 

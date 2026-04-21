@@ -44,6 +44,8 @@ class PtCheckpoint:
     max_pickle_bytes: int | None = None,
     strict_contiguous: bool | None = None,
     state_dict_root_key: str | None = None,
+    state_dict_root_keys: list[str] | None = None,
+    state_dict_root_strict: bool | None = None,
   ) -> "PtCheckpoint":
     pt_path_obj = Path(pt_path)
     core = PtCheckpointCore.load(
@@ -54,6 +56,8 @@ class PtCheckpoint:
       max_pickle_bytes=max_pickle_bytes,
       strict_contiguous=strict_contiguous,
       state_dict_root_key=state_dict_root_key,
+      state_dict_root_keys=state_dict_root_keys,
+      state_dict_root_strict=state_dict_root_strict,
     )
     return cls(core, input_path=pt_path_obj)
 

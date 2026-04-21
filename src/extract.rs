@@ -2,69 +2,54 @@ use std::collections::BTreeMap;
 
 use crate::types::{ConvertError, LoadOptions, Result, TensorRef, Value};
 
-pub(crate) fn extract_state_dict_tensors(root: &Value, opts: &LoadOptions) -> Result<BTreeMap<String, TensorRef>> {
-  let mut out = BTreeMap::new();
+pub(crate) fn extract_state_dict_tensors(
+  root: &Value,
+  opts: &LoadOptions,
+) -> Result<BTreeMap<String, BTreeMap<String, TensorRef>>> {
+  let mut groups = BTreeMap::new();
 
-  let first_key = opts.state_dict_root_key.as_deref().unwrap_or("model");
-  if let Some(model) = find_named_child(root, first_key) {
-    collect_module_state_tensors(model, "", &mut out);
-  }
-  if out.is_empty() {
+  if opts.state_dict_root_keys.is_empty() {
+    let mut out = BTreeMap::new();
     collect_module_state_tensors(root, "", &mut out);
+    if out.is_empty() {
+      return Err(ConvertError::InvalidStructure(
+        "could not find a tensor state_dict in checkpoint pickle".to_string(),
+      ));
+    }
+    groups.insert("root".to_string(), out);
+    return Ok(groups);
   }
-  if out.is_empty() {
-    let mut best = BTreeMap::new();
-    collect_largest_tensor_map(root, &mut best);
-    out = best;
+
+  for key in &opts.state_dict_root_keys {
+    let Some(target) = find_deep_child(root, key) else {
+      if opts.state_dict_root_strict {
+        return Err(ConvertError::InvalidStructure(format!(
+          "could not find configured state_dict_root_key '{}' in checkpoint pickle",
+          key
+        )));
+      }
+      continue;
+    };
+    let mut out = BTreeMap::new();
+    collect_module_state_tensors(target, "", &mut out);
+    if out.is_empty() {
+      if opts.state_dict_root_strict {
+        return Err(ConvertError::InvalidStructure(format!(
+          "could not find a tensor state_dict under configured state_dict_root_key '{}'",
+          key
+        )));
+      }
+      continue;
+    }
+    groups.insert(key.clone(), out);
   }
-  if out.is_empty() {
+
+  if groups.is_empty() {
     return Err(ConvertError::InvalidStructure(
-      "could not find a tensor state_dict in checkpoint pickle".to_string(),
+      "could not find a tensor state_dict in any configured state_dict_root_key".to_string(),
     ));
   }
-  Ok(out)
-}
-
-fn collect_largest_tensor_map(value: &Value, best: &mut BTreeMap<String, TensorRef>) {
-  let candidate = tensor_map_from_value(value);
-  if candidate.len() > best.len() {
-    *best = candidate;
-  }
-
-  match value {
-    Value::Dict(entries) => {
-      for (_, child) in entries {
-        collect_largest_tensor_map(child, best);
-      }
-    }
-    Value::OrderedDict(entries) => {
-      for (_, child) in entries {
-        collect_largest_tensor_map(child, best);
-      }
-    }
-    Value::List(items) | Value::Tuple(items) => {
-      for child in items {
-        collect_largest_tensor_map(child, best);
-      }
-    }
-    Value::Object { args, state, .. } => {
-      for arg in args {
-        collect_largest_tensor_map(arg, best);
-      }
-      if let Some(state) = state {
-        collect_largest_tensor_map(state, best);
-      }
-    }
-    Value::Call { args, state, .. } => {
-      for child in args {
-        collect_largest_tensor_map(child, best);
-      }
-      if let Some(state) = state {
-        collect_largest_tensor_map(state, best);
-      }
-    }
-    _ => {}
-  }
+  Ok(groups)
 }
 
 fn collect_module_state_tensors(value: &Value, prefix: &str, out: &mut BTreeMap<String, TensorRef>) {
@@ -73,6 +58,7 @@ fn collect_module_state_tensors(value: &Value, prefix: &str, out: &mut BTreeMap<
       collect_from_module_state(state, prefix, out);
     }
     Value::Dict(entries) => {
+      collect_prefixed_tensor_map(value, prefix, out);
       for (key, child) in entries {
         let Some(name) = key_as_string(key) else {
           continue;
@@ -92,6 +78,7 @@ fn collect_module_state_tensors(value: &Value, prefix: &str, out: &mut BTreeMap<
       }
     }
     Value::OrderedDict(entries) => {
+      collect_prefixed_tensor_map(value, prefix, out);
       for (name, child) in entries {
         let next_prefix = join_name(prefix, name);
         match child {
@@ -175,6 +162,14 @@ fn find_named_child<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     }
   }
   None
+}
+
+fn find_deep_child<'a>(value: &'a Value, key_path: &str) -> Option<&'a Value> {
+  let mut current = value;
+  for segment in key_path.split('.') {
+    current = find_named_child(current, segment)?;
+  }
+  Some(current)
 }
 
 pub(crate) fn mapping_entries(value: &Value) -> Option<Vec<(String, &Value)>> {
@@ -306,7 +301,7 @@ mod tests {
   }
 
   #[test]
-  fn prefers_model_by_default() {
+  fn extracts_from_root_when_no_root_key_is_set() {
     let root = Value::Dict(vec![
       (
         Value::String("model".to_string()),
@@ -319,12 +314,13 @@ mod tests {
     ]);
 
     let out = extract_state_dict_tensors(&root, &LoadOptions::default()).expect("extract tensors");
-    assert!(out.contains_key("w_model"));
-    assert!(!out.contains_key("w_module"));
+    let root_group = out.get("root").expect("root group");
+    assert!(root_group.contains_key("model.w_model"));
+    assert!(root_group.contains_key("module.w_module"));
   }
 
   #[test]
-  fn supports_custom_state_dict_root_key() {
+  fn supports_custom_state_dict_root_key_list() {
     let root = Value::Dict(vec![
       (
         Value::String("model".to_string()),
@@ -337,11 +333,63 @@ mod tests {
     ]);
 
     let opts = LoadOptions {
-      state_dict_root_key: Some("module".to_string()),
+      state_dict_root_keys: vec!["module".to_string()],
       ..LoadOptions::default()
     };
     let out = extract_state_dict_tensors(&root, &opts).expect("extract tensors");
-    assert!(out.contains_key("w_module"));
-    assert!(!out.contains_key("w_model"));
+    let module_group = out.get("module").expect("module group");
+    assert!(module_group.contains_key("w_module"));
+    assert!(!module_group.contains_key("w_model"));
+  }
+
+  #[test]
+  fn fails_without_fallback_when_custom_root_key_is_missing_in_strict_mode() {
+    let root = Value::Dict(vec![(
+      Value::String("model".to_string()),
+      module_with_named_parameter("w_model", "model_key"),
+    )]);
+
+    let opts = LoadOptions {
+      state_dict_root_keys: vec!["ema".to_string()],
+      ..LoadOptions::default()
+    };
+    let err = extract_state_dict_tensors(&root, &opts).expect_err("missing custom root key should fail");
+    assert!(err.to_string().contains("could not find configured state_dict_root_key"));
+  }
+
+  #[test]
+  fn skips_missing_when_non_strict_mode_is_enabled() {
+    let root = Value::Dict(vec![(
+      Value::String("model".to_string()),
+      module_with_named_parameter("w_model", "model_key"),
+    )]);
+
+    let opts = LoadOptions {
+      state_dict_root_keys: vec!["ema".to_string(), "model".to_string()],
+      state_dict_root_strict: false,
+      ..LoadOptions::default()
+    };
+    let out = extract_state_dict_tensors(&root, &opts).expect("should extract model key and skip ema");
+    assert!(!out.contains_key("ema"));
+    assert!(out.contains_key("model"));
+  }
+
+  #[test]
+  fn supports_deep_key_path() {
+    let root = Value::Dict(vec![(
+      Value::String("ema".to_string()),
+      Value::Dict(vec![(
+        Value::String("model".to_string()),
+        module_with_named_parameter("w_ema_model", "ema_model_key"),
+      )]),
+    )]);
+
+    let opts = LoadOptions {
+      state_dict_root_keys: vec!["ema.model".to_string()],
+      ..LoadOptions::default()
+    };
+    let out = extract_state_dict_tensors(&root, &opts).expect("extract deep key path");
+    let group = out.get("ema.model").expect("ema.model group");
+    assert!(group.contains_key("w_ema_model"));
   }
 }

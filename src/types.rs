@@ -11,7 +11,8 @@ pub struct LoadOptions {
   pub max_tensor_bytes: usize,
   pub max_pickle_bytes: usize,
   pub strict_contiguous: bool,
-  pub state_dict_root_key: Option<String>,
+  pub state_dict_root_keys: Vec<String>,
+  pub state_dict_root_strict: bool,
 }
 
 impl Default for LoadOptions {
@@ -22,7 +23,8 @@ impl Default for LoadOptions {
       max_tensor_bytes: 1024 * 1024 * 1024,
       max_pickle_bytes: 64 * 1024 * 1024,
       strict_contiguous: true,
-      state_dict_root_key: None,
+      state_dict_root_keys: Vec::new(),
+      state_dict_root_strict: true,
     }
   }
 }
@@ -80,6 +82,8 @@ fn default_weights_filename(format: ExportFormat, input_path: Option<&Path>) -> 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExportResult {
   pub weights_path: PathBuf,
+  #[serde(default)]
+  pub weights_paths: BTreeMap<String, PathBuf>,
   pub metadata_path: Option<PathBuf>,
   pub source_sha256: String,
   pub tensor_count: usize,
@@ -108,13 +112,22 @@ pub struct CheckpointMetadata {
   pub source_file: String,
   pub source_sha256: String,
   pub safetensors_file: String,
+  #[serde(default)]
+  pub safetensors_files: BTreeMap<String, String>,
   pub created_at_unix: u64,
   pub tensor_count: usize,
   pub total_tensor_bytes: usize,
   #[serde(default)]
   pub metadata: serde_yaml::Value,
   pub security: CheckpointSecurity,
-  pub tensors: Vec<CheckpointTensorMetadata>,
+  pub tensors: TensorManifest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TensorManifest {
+  List(Vec<CheckpointTensorMetadata>),
+  ByRoot(BTreeMap<String, Vec<CheckpointTensorMetadata>>),
 }
 
 #[derive(Debug, Clone)]
@@ -348,6 +361,7 @@ pub struct ParsedCheckpoint {
   pub source_sha256: String,
   pub warnings: Vec<String>,
   pub tensors: BTreeMap<String, TensorData>,
+  pub tensor_groups: BTreeMap<String, BTreeMap<String, TensorData>>,
   pub metadata: serde_yaml::Value,
   pub security: CheckpointSecurity,
 }

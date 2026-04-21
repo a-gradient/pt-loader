@@ -1,6 +1,6 @@
 use pt_loader::{
   writer::inline_known_int_vec_fields_in_tensors, CheckpointMetadata, CheckpointSecurity,
-  CheckpointTensorMetadata, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint,
+  CheckpointTensorMetadata, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint, TensorManifest,
 };
 use safetensors::SafeTensors;
 use sha2::{Digest, Sha256};
@@ -39,7 +39,10 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
   let sample_out_dir = out_root.join(&stem);
   std::fs::create_dir_all(&sample_out_dir).expect("create sample out dir");
 
-  let checkpoint = match PtCheckpoint::load(input, LoadOptions::default()) {
+  let mut load_opts = LoadOptions::default();
+  load_opts.state_dict_root_keys = vec!["model".to_string(), "ema".to_string(), "optimizer".to_string()];
+  load_opts.state_dict_root_strict = false;
+  let checkpoint = match PtCheckpoint::load(input, load_opts) {
     Ok(value) => value,
     Err(err) if !has_reference => {
       eprintln!(
@@ -60,7 +63,12 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
     .export(&sample_out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(input)))
     .unwrap_or_else(|err| panic!("sample checkpoint should convert ({}): {err}", input.display()));
 
-  assert!(result.weights_path.exists(), "missing weights output for {}", input.display());
+  let result_weights_path = result
+    .weights_paths
+    .get("model")
+    .or_else(|| result.weights_paths.get("root"))
+    .unwrap_or(&result.weights_path);
+  assert!(result_weights_path.exists(), "missing weights output for {}", input.display());
   assert!(
     result.metadata_path.as_ref().expect("metadata path").exists(),
     "missing metadata output for {}",
@@ -73,7 +81,7 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
     input.display()
   );
 
-  let converted_shapes = read_safetensors_shapes(&result.weights_path);
+  let converted_shapes = read_safetensors_shapes(result_weights_path);
   assert!(!converted_shapes.is_empty(), "converted safetensors is empty for {}", input.display());
 
   if reference_yaml.exists() {
@@ -166,6 +174,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
       .file_name()
       .map(|value| value.to_string_lossy().into_owned())
       .unwrap_or_else(|| "model.safetensors".to_string()),
+    safetensors_files: BTreeMap::new(),
     created_at_unix: 0,
     tensor_count: yaml_tensors.len(),
     total_tensor_bytes,
@@ -174,7 +183,7 @@ fn generate_yaml_from_safetensors(safetensors_path: &Path, yaml_path: &Path) {
       objects: Vec::new(),
       calls: Vec::new(),
     },
-    tensors: yaml_tensors,
+    tensors: TensorManifest::List(yaml_tensors),
   };
 
   let encoded = serde_yaml::to_string(&payload).expect("encode yaml");
@@ -204,10 +213,30 @@ fn read_model_yaml(path: &Path) -> CheckpointMetadata {
 fn read_model_yaml_tensors(path: &Path) -> BTreeMap<String, (String, Vec<usize>, String)> {
   let parsed = read_model_yaml(path);
   let mut map = BTreeMap::new();
-  for item in parsed.tensors {
-    map.insert(item.name, (item.dtype, item.shape, item.sha256));
+  match parsed.tensors {
+    TensorManifest::List(items) => {
+      for item in items {
+        map.insert(item.name, (item.dtype, item.shape, item.sha256));
+      }
+    }
+    TensorManifest::ByRoot(groups) => {
+      for (root, items) in groups {
+        for item in items {
+          let name = merge_root_tensor_name(&root, &item.name);
+          map.insert(name, (item.dtype, item.shape, item.sha256));
+        }
+      }
+    }
   }
   map
+}
+
+fn merge_root_tensor_name(root: &str, name: &str) -> String {
+  if root == "root" || name == root || name.starts_with(&format!("{root}.")) {
+    name.to_string()
+  } else {
+    format!("{root}.{name}")
+  }
 }
 
 fn sha256_file(path: &Path) -> String {

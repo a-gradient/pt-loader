@@ -9,7 +9,7 @@ pub mod writer;
 
 pub use types::{
   CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata, ConvertError, DType, ExportFormat,
-  ExportOptions, ExportResult,
+  ExportOptions, ExportResult, TensorManifest,
   LoadOptions, ReconstructSource, Result, StorageRef, TensorArray, TensorData, TensorRef, Value,
 };
 
@@ -36,6 +36,7 @@ pub struct PtCheckpoint {
   warnings: Vec<String>,
   metadata: CheckpointMetadata,
   tensors: BTreeMap<String, TensorData>,
+  tensor_groups: BTreeMap<String, BTreeMap<String, TensorData>>,
 }
 
 impl PtCheckpoint {
@@ -56,6 +57,7 @@ impl PtCheckpoint {
       warnings: parsed.warnings,
       metadata,
       tensors: parsed.tensors,
+      tensor_groups: parsed.tensor_groups,
     })
   }
 
@@ -66,12 +68,15 @@ impl PtCheckpoint {
     };
 
     validate_metadata_against_tensors(&metadata, &tensors)?;
+    let mut tensor_groups = BTreeMap::new();
+    tensor_groups.insert("root".to_string(), tensors.clone());
 
     Ok(Self {
       source_sha256: metadata.source_sha256.clone(),
       warnings: Vec::new(),
       metadata,
       tensors,
+      tensor_groups,
     })
   }
 
@@ -112,15 +117,32 @@ impl PtCheckpoint {
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)?;
 
+    let is_multi_root = self.tensor_groups.len() > 1 || !self.tensor_groups.contains_key("root");
     let weights_path = out_dir.join(&opts.weights_filename);
-    if weights_path.exists() && !opts.overwrite {
-      return Err(ConvertError::InvalidStructure(format!(
-        "output already exists: {}",
-        weights_path.display()
-      )));
+    let mut weights_paths = BTreeMap::new();
+    if is_multi_root {
+      for (root_key, tensors) in &self.tensor_groups {
+        let file_name = with_root_key_suffix(&opts.weights_filename, root_key)?;
+        let path = out_dir.join(&file_name);
+        if path.exists() && !opts.overwrite {
+          return Err(ConvertError::InvalidStructure(format!(
+            "output already exists: {}",
+            path.display()
+          )));
+        }
+        write_safetensors(&path, tensors, &self.source_sha256)?;
+        weights_paths.insert(root_key.clone(), path);
+      }
+    } else {
+      if weights_path.exists() && !opts.overwrite {
+        return Err(ConvertError::InvalidStructure(format!(
+          "output already exists: {}",
+          weights_path.display()
+        )));
+      }
+      write_safetensors(&weights_path, &self.tensors, &self.source_sha256)?;
+      weights_paths.insert("root".to_string(), weights_path.clone());
     }
-
-    write_safetensors(&weights_path, &self.tensors, &self.source_sha256)?;
 
     let metadata_path = if opts.include_metadata {
       let metadata_path = out_dir.join(&opts.metadata_filename);
@@ -132,11 +154,27 @@ impl PtCheckpoint {
       }
 
       let mut metadata = self.metadata.clone();
-      metadata.safetensors_file = opts.weights_filename.to_string_lossy().into_owned();
+      if is_multi_root {
+        metadata.safetensors_file.clear();
+        metadata.safetensors_files = weights_paths
+          .iter()
+          .map(|(key, path)| (key.clone(), file_name_or_path(path)))
+          .collect();
+        metadata.tensors = TensorManifest::ByRoot(
+          self
+            .tensor_groups
+            .iter()
+            .map(|(key, tensors)| (key.clone(), tensor_summaries_for_metadata(tensors)))
+            .collect(),
+        );
+      } else {
+        metadata.safetensors_file = opts.weights_filename.to_string_lossy().into_owned();
+        metadata.safetensors_files.clear();
+        metadata.tensors = TensorManifest::List(tensor_summaries_for_metadata(&self.tensors));
+      }
       metadata.created_at_unix = now_unix_secs();
       metadata.tensor_count = self.tensors.len();
       metadata.total_tensor_bytes = total_tensor_bytes(&self.tensors);
-      metadata.tensors = tensor_summaries_for_metadata(&self.tensors);
       write_metadata_yaml(&metadata_path, &metadata)?;
       Some(metadata_path)
     } else {
@@ -145,6 +183,7 @@ impl PtCheckpoint {
 
     Ok(ExportResult {
       weights_path,
+      weights_paths,
       metadata_path,
       source_sha256: self.source_sha256.clone(),
       tensor_count: self.tensors.len(),
@@ -193,92 +232,103 @@ pub(crate) fn parse_checkpoint(path: &Path, opts: &LoadOptions) -> Result<Parsed
   let metadata = project_root_metadata(&root);
   let objects = collect_constructor_types(&root);
   let calls = collect_call_types(&root);
-  let tensor_refs = extract_state_dict_tensors(&root, opts)?;
-  if tensor_refs.is_empty() {
+  let tensor_ref_groups = extract_state_dict_tensors(&root, opts)?;
+  if tensor_ref_groups.is_empty() {
     return Err(ConvertError::InvalidStructure(
       "no tensors found in checkpoint state_dict".to_string(),
     ));
   }
-  if tensor_refs.len() > opts.max_tensor_count {
+  let tensor_ref_count = tensor_ref_groups.values().map(|group| group.len()).sum::<usize>();
+  if tensor_ref_count > opts.max_tensor_count {
     return Err(ConvertError::ResourceLimitExceeded(format!(
       "tensor count {} exceeds limit {}",
-      tensor_refs.len(),
+      tensor_ref_count,
       opts.max_tensor_count
     )));
   }
 
   let mut storage_blobs: HashMap<String, Vec<u8>> = HashMap::new();
-  for tensor in tensor_refs.values() {
-    let key = &tensor.storage.key;
-    if storage_blobs.contains_key(key) {
-      continue;
+  for tensor_refs in tensor_ref_groups.values() {
+    for tensor in tensor_refs.values() {
+      let key = &tensor.storage.key;
+      if storage_blobs.contains_key(key) {
+        continue;
+      }
+      let blob = read_storage_blob(&mut archive, &prefix, key)?;
+      let required_bytes = tensor.storage.size_elems * tensor.storage.dtype.elem_size();
+      if blob.len() < required_bytes {
+        return Err(ConvertError::InvalidStructure(format!(
+          "storage {} has {} bytes, expected at least {}",
+          key,
+          blob.len(),
+          required_bytes
+        )));
+      }
+      storage_blobs.insert(key.clone(), blob);
     }
-    let blob = read_storage_blob(&mut archive, &prefix, key)?;
-    let required_bytes = tensor.storage.size_elems * tensor.storage.dtype.elem_size();
-    if blob.len() < required_bytes {
-      return Err(ConvertError::InvalidStructure(format!(
-        "storage {} has {} bytes, expected at least {}",
-        key,
-        blob.len(),
-        required_bytes
-      )));
-    }
-    storage_blobs.insert(key.clone(), blob);
   }
 
   let mut tensors = BTreeMap::new();
-  for (name, tensor_ref) in tensor_refs {
-    if opts.strict_contiguous {
-      let expected = contiguous_stride(&tensor_ref.shape);
-      if expected != tensor_ref.stride {
-        return Err(ConvertError::InvalidStructure(format!(
-          "tensor {} has non-contiguous stride {:?}, expected {:?}",
-          name, tensor_ref.stride, expected
+  let mut tensor_groups = BTreeMap::new();
+  for (root_key, tensor_refs) in tensor_ref_groups {
+    let mut group_tensors = BTreeMap::new();
+    for (name, tensor_ref) in tensor_refs {
+      if opts.strict_contiguous {
+        let expected = contiguous_stride(&tensor_ref.shape);
+        if expected != tensor_ref.stride {
+          return Err(ConvertError::InvalidStructure(format!(
+            "tensor {} has non-contiguous stride {:?}, expected {:?}",
+            name, tensor_ref.stride, expected
+          )));
+        }
+      }
+
+      let elem_size = tensor_ref.storage.dtype.elem_size();
+      let numel = numel(&tensor_ref.shape)?;
+      let start = tensor_ref
+        .offset_elems
+        .checked_mul(elem_size)
+        .ok_or_else(|| ConvertError::InvalidStructure("tensor byte offset overflow".to_string()))?;
+      let byte_len = numel
+        .checked_mul(elem_size)
+        .ok_or_else(|| ConvertError::InvalidStructure("tensor byte length overflow".to_string()))?;
+      if byte_len > opts.max_tensor_bytes {
+        return Err(ConvertError::ResourceLimitExceeded(format!(
+          "tensor {} is {} bytes, limit is {}",
+          name, byte_len, opts.max_tensor_bytes
         )));
       }
-    }
+      let end = start
+        .checked_add(byte_len)
+        .ok_or_else(|| ConvertError::InvalidStructure("tensor slice overflow".to_string()))?;
 
-    let elem_size = tensor_ref.storage.dtype.elem_size();
-    let numel = numel(&tensor_ref.shape)?;
-    let start = tensor_ref
-      .offset_elems
-      .checked_mul(elem_size)
-      .ok_or_else(|| ConvertError::InvalidStructure("tensor byte offset overflow".to_string()))?;
-    let byte_len = numel
-      .checked_mul(elem_size)
-      .ok_or_else(|| ConvertError::InvalidStructure("tensor byte length overflow".to_string()))?;
-    if byte_len > opts.max_tensor_bytes {
-      return Err(ConvertError::ResourceLimitExceeded(format!(
-        "tensor {} is {} bytes, limit is {}",
-        name, byte_len, opts.max_tensor_bytes
-      )));
-    }
-    let end = start
-      .checked_add(byte_len)
-      .ok_or_else(|| ConvertError::InvalidStructure("tensor slice overflow".to_string()))?;
+      let storage = storage_blobs
+        .get(&tensor_ref.storage.key)
+        .ok_or_else(|| ConvertError::InvalidStructure(format!("missing storage blob {}", tensor_ref.storage.key)))?;
+      if end > storage.len() {
+        return Err(ConvertError::InvalidStructure(format!(
+          "tensor {} slice [{}, {}) is out of storage bounds {}",
+          name,
+          start,
+          end,
+          storage.len()
+        )));
+      }
 
-    let storage = storage_blobs
-      .get(&tensor_ref.storage.key)
-      .ok_or_else(|| ConvertError::InvalidStructure(format!("missing storage blob {}", tensor_ref.storage.key)))?;
-    if end > storage.len() {
-      return Err(ConvertError::InvalidStructure(format!(
-        "tensor {} slice [{}, {}) is out of storage bounds {}",
-        name,
-        start,
-        end,
-        storage.len()
-      )));
+      let raw = storage[start..end].to_vec();
+      let normalized = normalize_tensor_dtype(tensor_ref.storage.dtype, tensor_ref.shape, raw)?;
+      group_tensors.insert(name.clone(), normalized.clone());
+      let merged_name = merge_root_tensor_name(&root_key, &name);
+      tensors.insert(merged_name, normalized);
     }
-
-    let raw = storage[start..end].to_vec();
-    let normalized = normalize_tensor_dtype(tensor_ref.storage.dtype, tensor_ref.shape, raw)?;
-    tensors.insert(name, normalized);
+    tensor_groups.insert(root_key, group_tensors);
   }
 
   Ok(ParsedCheckpoint {
     source_sha256,
     warnings: Vec::new(),
     tensors,
+    tensor_groups,
     metadata,
     security: CheckpointSecurity { objects, calls },
   })
@@ -297,12 +347,13 @@ fn build_checkpoint_metadata(
     source_file,
     source_sha256,
     safetensors_file,
+    safetensors_files: BTreeMap::new(),
     created_at_unix: now_unix_secs(),
     tensor_count: tensors.len(),
     total_tensor_bytes: total_tensor_bytes(tensors),
     metadata: metadata.clone(),
     security: security.clone(),
-    tensors: tensor_summaries_for_metadata(tensors),
+    tensors: TensorManifest::List(tensor_summaries_for_metadata(tensors)),
   }
 }
 
@@ -320,6 +371,33 @@ fn tensor_summaries_for_metadata(tensors: &BTreeMap<String, TensorData>) -> Vec<
 
 fn total_tensor_bytes(tensors: &BTreeMap<String, TensorData>) -> usize {
   tensors.values().map(|tensor| tensor.bytes.len()).sum()
+}
+
+fn file_name_or_path(path: &Path) -> String {
+  path
+    .file_name()
+    .map(|name| name.to_string_lossy().into_owned())
+    .unwrap_or_else(|| path.display().to_string())
+}
+
+fn merge_root_tensor_name(root: &str, name: &str) -> String {
+  if root == "root" || name == root || name.starts_with(&format!("{root}.")) {
+    name.to_string()
+  } else {
+    format!("{root}.{name}")
+  }
+}
+
+fn with_root_key_suffix(base: &Path, root_key: &str) -> Result<std::path::PathBuf> {
+  let ext = base
+    .extension()
+    .map(|value| value.to_string_lossy().into_owned())
+    .ok_or_else(|| ConvertError::InvalidStructure("weights filename has no extension".to_string()))?;
+  let stem = base
+    .file_stem()
+    .map(|value| value.to_string_lossy().into_owned())
+    .ok_or_else(|| ConvertError::InvalidStructure("weights filename has no stem".to_string()))?;
+  Ok(std::path::PathBuf::from(format!("{stem}.{root_key}.{ext}")))
 }
 
 fn now_unix_secs() -> u64 {
@@ -349,17 +427,28 @@ fn validate_metadata_against_tensors(
     )));
   }
 
-  for item in &metadata.tensors {
-    let Some(tensor) = tensors.get(&item.name) else {
+  let flat_manifest = match &metadata.tensors {
+    TensorManifest::List(items) => items.iter().map(|item| (item.name.clone(), item)).collect::<Vec<_>>(),
+    TensorManifest::ByRoot(groups) => groups
+      .iter()
+      .flat_map(|(root, items)| {
+        items
+          .iter()
+          .map(move |item| (merge_root_tensor_name(root, &item.name), item))
+      })
+      .collect::<Vec<_>>(),
+  };
+  for (name, item) in flat_manifest {
+    let Some(tensor) = tensors.get(&name) else {
       return Err(ConvertError::InvalidStructure(format!(
         "metadata references missing tensor {}",
-        item.name
+        name
       )));
     };
     if item.dtype != tensor.dtype.as_safetensors() {
       return Err(ConvertError::InvalidStructure(format!(
         "metadata dtype mismatch for {}: {} != {}",
-        item.name,
+        name,
         item.dtype,
         tensor.dtype.as_safetensors()
       )));
@@ -367,13 +456,13 @@ fn validate_metadata_against_tensors(
     if item.shape != tensor.shape {
       return Err(ConvertError::InvalidStructure(format!(
         "metadata shape mismatch for {}",
-        item.name
+        name
       )));
     }
     if item.sha256 != sha256_hex(&tensor.bytes) {
       return Err(ConvertError::InvalidStructure(format!(
         "metadata sha256 mismatch for {}",
-        item.name
+        name
       )));
     }
   }

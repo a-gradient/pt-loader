@@ -18,6 +18,8 @@ class PtCheckpoint:
     max_pickle_bytes: int | None = None,
     strict_contiguous: bool | None = None,
     state_dict_root_key: str | None = None,
+    state_dict_root_keys: list[str] | None = None,
+    state_dict_root_strict: bool | None = None,
   ) -> PtCheckpoint: ...
 
   def export(

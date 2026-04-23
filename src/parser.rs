@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{ConvertError, DType, LoadOptions, Result, StorageRef, TensorRef, Value};
+use crate::types::{ConvertError, DType, LoadOptions, NumpyScalarData, Result, StorageRef, TensorRef, Value};
 
 pub(crate) fn parse_pickle(input: &[u8], opts: &LoadOptions) -> Result<Value> {
   PickleParser::new(input, opts).parse()
@@ -417,6 +417,17 @@ impl<'a> PickleParser<'a> {
           ))),
         }
       }
+      ("numpy._core.multiarray", "scalar") | ("numpy.core.multiarray", "scalar") => {
+        if let Some(value) = recover_numpy_scalar_call(&args) {
+          Ok(value)
+        } else {
+          Ok(Value::Call {
+            func: format!("{module}.{name}"),
+            args,
+            state: None,
+          })
+        }
+      }
       _ => Ok(Value::Call {
         func: format!("{module}.{name}"),
         args,
@@ -647,5 +658,321 @@ fn storage_name_to_dtype(name: &str) -> Result<DType> {
       "unsupported torch storage type {}",
       name
     ))),
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NumpyEndian {
+  Little,
+  Big,
+  NotApplicable,
+}
+
+fn recover_numpy_scalar_call(args: &[Value]) -> Option<Value> {
+  if args.len() != 2 {
+    return None;
+  }
+  let (dtype, endian) = recover_numpy_dtype(&args[0])?;
+  let raw = recover_numpy_scalar_bytes(&args[1])?;
+  let data = decode_numpy_scalar(dtype, endian, &raw)?;
+  Some(Value::NumpyScalar {
+    dtype,
+    shape: Vec::new(),
+    data,
+  })
+}
+
+fn recover_numpy_dtype(value: &Value) -> Option<(DType, NumpyEndian)> {
+  let Value::Call { func, args, state } = value else {
+    return None;
+  };
+  if func != "numpy.dtype" {
+    return None;
+  }
+  let code = args.first()?.as_string().ok()?;
+
+  let mut code_bytes = code.as_bytes();
+  let mut byte_order = None;
+  if let Some(prefix) = code_bytes.first().copied() {
+    if matches!(prefix, b'<' | b'>' | b'|' | b'=') {
+      byte_order = Some(prefix as char);
+      code_bytes = &code_bytes[1..];
+    }
+  }
+
+  if byte_order.is_none() {
+    if let Some(state) = state {
+      if let Value::Tuple(items) | Value::List(items) = state.as_ref() {
+        if let Some(Value::String(order)) = items.get(1) {
+          byte_order = order.chars().next();
+        }
+      }
+    }
+  }
+
+  let dtype = map_numpy_dtype_code(std::str::from_utf8(code_bytes).ok()?)?;
+  let endian = match byte_order? {
+    '<' => NumpyEndian::Little,
+    '>' => NumpyEndian::Big,
+    '|' => NumpyEndian::NotApplicable,
+    '=' => return None,
+    _ => return None,
+  };
+
+  if matches!(endian, NumpyEndian::NotApplicable) && dtype.elem_size() > 1 {
+    return None;
+  }
+
+  Some((dtype, endian))
+}
+
+fn map_numpy_dtype_code(code: &str) -> Option<DType> {
+  match code {
+    "f2" => Some(DType::F16),
+    "f4" => Some(DType::F32),
+    "f8" => Some(DType::F64),
+    "i1" => Some(DType::I8),
+    "i2" => Some(DType::I16),
+    "i4" => Some(DType::I32),
+    "i8" => Some(DType::I64),
+    "u1" => Some(DType::U8),
+    "b1" => Some(DType::Bool),
+    "bf16" | "bfloat16" => Some(DType::BF16),
+    _ => None,
+  }
+}
+
+fn recover_numpy_scalar_bytes(value: &Value) -> Option<Vec<u8>> {
+  match value {
+    Value::Bytes(bytes) => Some(bytes.clone()),
+    Value::Call { func, args, state } if (func == "_codecs.encode" || func == "codecs.encode") && state.is_none() => {
+      if args.len() != 2 {
+        return None;
+      }
+      let text = match &args[0] {
+        Value::String(s) => s,
+        _ => return None,
+      };
+      let encoding = match &args[1] {
+        Value::String(s) => s,
+        _ => return None,
+      };
+      if encoding != "latin1" {
+        return None;
+      }
+      text
+        .chars()
+        .map(|ch| u8::try_from(ch as u32).ok())
+        .collect::<Option<Vec<u8>>>()
+    }
+    _ => None,
+  }
+}
+
+fn decode_numpy_scalar(dtype: DType, endian: NumpyEndian, raw: &[u8]) -> Option<NumpyScalarData> {
+  if raw.len() != dtype.elem_size() {
+    return None;
+  }
+  Some(match dtype {
+    DType::F16 => {
+      let bits = read_u16(raw, endian)?;
+      NumpyScalarData::F32(f16_bits_to_f32(bits))
+    }
+    DType::BF16 => {
+      let bits = read_u16(raw, endian)?;
+      NumpyScalarData::F32(f32::from_bits((bits as u32) << 16))
+    }
+    DType::F32 => {
+      let bits = read_u32(raw, endian)?;
+      NumpyScalarData::F32(f32::from_bits(bits))
+    }
+    DType::F64 => {
+      let bits = read_u64(raw, endian)?;
+      NumpyScalarData::F64(f64::from_bits(bits))
+    }
+    DType::I8 => NumpyScalarData::I8(raw[0] as i8),
+    DType::I16 => NumpyScalarData::I16(read_u16(raw, endian)? as i16),
+    DType::I32 => NumpyScalarData::I32(read_u32(raw, endian)? as i32),
+    DType::I64 => NumpyScalarData::I64(read_u64(raw, endian)? as i64),
+    DType::U8 => NumpyScalarData::U8(raw[0]),
+    DType::Bool => NumpyScalarData::Bool(raw[0] != 0),
+  })
+}
+
+fn read_u16(raw: &[u8], endian: NumpyEndian) -> Option<u16> {
+  let bytes: [u8; 2] = raw.try_into().ok()?;
+  Some(match endian {
+    NumpyEndian::Little => u16::from_le_bytes(bytes),
+    NumpyEndian::Big => u16::from_be_bytes(bytes),
+    NumpyEndian::NotApplicable => u16::from_le_bytes(bytes),
+  })
+}
+
+fn read_u32(raw: &[u8], endian: NumpyEndian) -> Option<u32> {
+  let bytes: [u8; 4] = raw.try_into().ok()?;
+  Some(match endian {
+    NumpyEndian::Little => u32::from_le_bytes(bytes),
+    NumpyEndian::Big => u32::from_be_bytes(bytes),
+    NumpyEndian::NotApplicable => u32::from_le_bytes(bytes),
+  })
+}
+
+fn read_u64(raw: &[u8], endian: NumpyEndian) -> Option<u64> {
+  let bytes: [u8; 8] = raw.try_into().ok()?;
+  Some(match endian {
+    NumpyEndian::Little => u64::from_le_bytes(bytes),
+    NumpyEndian::Big => u64::from_be_bytes(bytes),
+    NumpyEndian::NotApplicable => u64::from_le_bytes(bytes),
+  })
+}
+
+fn f16_bits_to_f32(bits: u16) -> f32 {
+  let sign = ((bits >> 15) & 0x1) as u32;
+  let exp = ((bits >> 10) & 0x1f) as u32;
+  let frac = (bits & 0x03ff) as u32;
+
+  let f32_bits = if exp == 0 {
+    if frac == 0 {
+      sign << 31
+    } else {
+      let mut mant = frac;
+      let mut e = -14i32;
+      while (mant & 0x0400) == 0 {
+        mant <<= 1;
+        e -= 1;
+      }
+      mant &= 0x03ff;
+      let exp32 = (e + 127) as u32;
+      (sign << 31) | (exp32 << 23) | (mant << 13)
+    }
+  } else if exp == 0x1f {
+    (sign << 31) | (0xff << 23) | (frac << 13)
+  } else {
+    let exp32 = (exp as i32 - 15 + 127) as u32;
+    (sign << 31) | (exp32 << 23) | (frac << 13)
+  };
+
+  f32::from_bits(f32_bits)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn numpy_scalar_global() -> Value {
+    Value::Global {
+      module: "numpy._core.multiarray".to_string(),
+      name: "scalar".to_string(),
+    }
+  }
+
+  fn dtype_call(code: &str, order: &str) -> Value {
+    Value::Call {
+      func: "numpy.dtype".to_string(),
+      args: vec![Value::String(code.to_string()), Value::Bool(false), Value::Bool(true)],
+      state: Some(Box::new(Value::Tuple(vec![
+        Value::Int(3),
+        Value::String(order.to_string()),
+        Value::None,
+        Value::None,
+        Value::None,
+        Value::Int(-1),
+        Value::Int(-1),
+        Value::Int(0),
+      ]))),
+    }
+  }
+
+  fn latin1_codec_bytes(bytes: &[u8]) -> Value {
+    let text = bytes.iter().map(|byte| char::from(*byte)).collect::<String>();
+    Value::Call {
+      func: "_codecs.encode".to_string(),
+      args: vec![Value::String(text), Value::String("latin1".to_string())],
+      state: None,
+    }
+  }
+
+  fn parser<'a>(opts: &'a LoadOptions) -> PickleParser<'a> {
+    PickleParser::new(&[], opts)
+  }
+
+  #[test]
+  fn recovers_numpy_scalars() {
+    let opts = LoadOptions::default();
+    let parser = parser(&opts);
+    let cases = vec![
+      (
+        dtype_call("f4", "<"),
+        Value::Bytes(3.5f32.to_le_bytes().to_vec()),
+        NumpyScalarData::F32(3.5f32),
+      ),
+      (
+        dtype_call("f8", "<"),
+        Value::Bytes((-2.25f64).to_le_bytes().to_vec()),
+        NumpyScalarData::F64(-2.25f64),
+      ),
+      (
+        dtype_call("i8", "<"),
+        latin1_codec_bytes(&(-7i64).to_le_bytes()),
+        NumpyScalarData::I64(-7),
+      ),
+      (
+        dtype_call("u1", "|"),
+        latin1_codec_bytes(&[255]),
+        NumpyScalarData::U8(255),
+      ),
+      (
+        dtype_call("b1", "|"),
+        Value::Bytes(vec![1]),
+        NumpyScalarData::Bool(true),
+      ),
+    ];
+
+    for (dtype, data, expected) in cases {
+      let out = parser
+        .apply_reduce(numpy_scalar_global(), Value::Tuple(vec![dtype, data]))
+        .expect("numpy scalar reduce should parse");
+      match out {
+        Value::NumpyScalar { dtype: _, shape, data } => {
+          assert!(shape.is_empty());
+          assert_eq!(data, expected);
+        }
+        other => panic!("expected numpy scalar recovery, got {:?}", other),
+      }
+    }
+  }
+
+  #[test]
+  fn leaves_unrecognized_numpy_scalar_calls_untouched() {
+    let opts = LoadOptions::default();
+    let parser = parser(&opts);
+
+    let unknown_dtype = parser
+      .apply_reduce(
+        numpy_scalar_global(),
+        Value::Tuple(vec![dtype_call("x9", "<"), Value::Bytes(vec![1, 2, 3, 4])]),
+      )
+      .expect("unknown dtype should keep call");
+    match unknown_dtype {
+      Value::Call { func, args, state } => {
+        assert_eq!(func, "numpy._core.multiarray.scalar");
+        assert_eq!(args.len(), 2);
+        assert!(state.is_none());
+      }
+      other => panic!("expected fallback call, got {:?}", other),
+    }
+
+    let native_endian = parser
+      .apply_reduce(
+        numpy_scalar_global(),
+        Value::Tuple(vec![dtype_call("f4", "="), Value::Bytes(1.0f32.to_le_bytes().to_vec())]),
+      )
+      .expect("native-endian should keep call");
+    assert!(matches!(native_endian, Value::Call { .. }));
+
+    let malformed = parser
+      .apply_reduce(numpy_scalar_global(), Value::Tuple(vec![dtype_call("f4", "<")]))
+      .expect("malformed scalar args should keep call");
+    assert!(matches!(malformed, Value::Call { .. }));
   }
 }

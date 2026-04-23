@@ -292,7 +292,10 @@ mod tests {
       state: Some(Box::new(Value::Dict(vec![
         (
           Value::String("_parameters".to_string()),
-          Value::Dict(vec![(Value::String(param_name.to_string()), tensor_ref_with_key(storage_key))]),
+          Value::Dict(vec![(
+            Value::String(param_name.to_string()),
+            tensor_ref_with_key(storage_key),
+          )]),
         ),
         (Value::String("_buffers".to_string()), Value::Dict(Vec::new())),
         (Value::String("_modules".to_string()), Value::Dict(Vec::new())),
@@ -354,7 +357,9 @@ mod tests {
       ..LoadOptions::default()
     };
     let err = extract_state_dict_tensors(&root, &opts).expect_err("missing custom root key should fail");
-    assert!(err.to_string().contains("could not find configured state_dict_root_key"));
+    assert!(err
+      .to_string()
+      .contains("could not find configured state_dict_root_key"));
   }
 
   #[test]

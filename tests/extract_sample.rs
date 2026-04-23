@@ -1,6 +1,6 @@
 use pt_loader::{
-  writer::inline_known_int_vec_fields_in_tensors, CheckpointMetadata, CheckpointSecurity,
-  CheckpointTensorMetadata, ExportFormat, ExportOptions, LoadOptions, PtCheckpoint, TensorManifest,
+  writer::inline_known_int_vec_fields_in_tensors, CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata,
+  ExportFormat, ExportOptions, LoadOptions, PtCheckpoint, TensorManifest,
 };
 use safetensors::SafeTensors;
 use sha2::{Digest, Sha256};
@@ -13,7 +13,11 @@ fn extracts_all_sample_pt_files() {
   let samples_dir = crate_root.join("samples");
   let mut pt_files = list_sample_pt_files(&samples_dir);
   pt_files.sort();
-  assert!(!pt_files.is_empty(), "expected at least one .pt sample in {}", samples_dir.display());
+  assert!(
+    !pt_files.is_empty(),
+    "expected at least one .pt sample in {}",
+    samples_dir.display()
+  );
 
   let out_root = crate_root.join("out").join("test_extract_sample");
   if out_root.exists() {
@@ -60,7 +64,10 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
     }
   };
   let result = checkpoint
-    .export(&sample_out_dir, ExportOptions::new(ExportFormat::Safetensors, Some(input)))
+    .export(
+      &sample_out_dir,
+      ExportOptions::new(ExportFormat::Safetensors, Some(input)),
+    )
     .unwrap_or_else(|err| panic!("sample checkpoint should convert ({}): {err}", input.display()));
 
   let result_weights_path = result
@@ -68,13 +75,21 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
     .get("model")
     .or_else(|| result.weights_paths.get("root"))
     .unwrap_or(&result.weights_path);
-  assert!(result_weights_path.exists(), "missing weights output for {}", input.display());
+  assert!(
+    result_weights_path.exists(),
+    "missing weights output for {}",
+    input.display()
+  );
   assert!(
     result.metadata_path.as_ref().expect("metadata path").exists(),
     "missing metadata output for {}",
     input.display()
   );
-  assert!(result.tensor_count > 0, "expected tensor_count > 0 for {}", input.display());
+  assert!(
+    result.tensor_count > 0,
+    "expected tensor_count > 0 for {}",
+    input.display()
+  );
   assert!(
     result.total_tensor_bytes > 0,
     "expected total_tensor_bytes > 0 for {}",
@@ -82,14 +97,19 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
   );
 
   let converted_shapes = read_safetensors_shapes(result_weights_path);
-  assert!(!converted_shapes.is_empty(), "converted safetensors is empty for {}", input.display());
+  assert!(
+    !converted_shapes.is_empty(),
+    "converted safetensors is empty for {}",
+    input.display()
+  );
 
   if reference_yaml.exists() {
     // 1) if corresponding yaml exists, compare with it
     let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
     let reference_yaml_tensors = read_model_yaml_tensors(&reference_yaml);
     assert_eq!(
-      out_yaml_tensors, reference_yaml_tensors,
+      out_yaml_tensors,
+      reference_yaml_tensors,
       "converted yaml tensors must match reference yaml for {}",
       input.display()
     );
@@ -100,7 +120,8 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
     let out_yaml_tensors = read_model_yaml_tensors(result.metadata_path.as_ref().expect("metadata"));
     let generated_yaml_tensors = read_model_yaml_tensors(&generated_yaml);
     assert_eq!(
-      out_yaml_tensors, generated_yaml_tensors,
+      out_yaml_tensors,
+      generated_yaml_tensors,
       "converted yaml tensors must match generated yaml from reference safetensors for {}",
       input.display()
     );

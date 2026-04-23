@@ -58,8 +58,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Some(value) = args.get(index + 1) else {
               return Err("--state-dict-root-strict requires a value".into());
             };
-            load_opts.state_dict_root_strict = parse_bool_flag(value)
-              .ok_or_else(|| "--state-dict-root-strict expects true|false".to_string())?;
+            load_opts.state_dict_root_strict =
+              parse_bool_flag(value).ok_or_else(|| "--state-dict-root-strict expects true|false".to_string())?;
             index += 2;
           }
           other => {
@@ -112,8 +112,8 @@ fn parse_load_options(args: &[String]) -> Result<LoadOptions, Box<dyn std::error
         let Some(value) = args.get(index + 1) else {
           return Err("--state-dict-root-strict requires a value".into());
         };
-        opts.state_dict_root_strict = parse_bool_flag(value)
-          .ok_or_else(|| "--state-dict-root-strict expects true|false".to_string())?;
+        opts.state_dict_root_strict =
+          parse_bool_flag(value).ok_or_else(|| "--state-dict-root-strict expects true|false".to_string())?;
         index += 2;
       }
       other => return Err(format!("unknown argument: {}", other).into()),

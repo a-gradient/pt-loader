@@ -8,9 +8,9 @@ mod types;
 pub mod writer;
 
 pub use types::{
-  CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata, ConvertError, DType, ExportFormat,
-  ExportOptions, ExportResult, TensorManifest,
-  LoadOptions, ReconstructSource, Result, StorageRef, TensorArray, TensorData, TensorRef, Value,
+  CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata, ConvertError, DType, ExportFormat, ExportOptions,
+  ExportResult, LoadOptions, NumpyScalarData, ReconstructSource, Result, StorageRef, TensorArray, TensorData,
+  TensorManifest, TensorRef, Value,
 };
 
 use ndarray::{ArrayD, IxDyn};
@@ -242,8 +242,7 @@ pub(crate) fn parse_checkpoint(path: &Path, opts: &LoadOptions) -> Result<Parsed
   if tensor_ref_count > opts.max_tensor_count {
     return Err(ConvertError::ResourceLimitExceeded(format!(
       "tensor count {} exceeds limit {}",
-      tensor_ref_count,
-      opts.max_tensor_count
+      tensor_ref_count, opts.max_tensor_count
     )));
   }
 
@@ -733,10 +732,7 @@ mod tests {
     let value = Value::Object {
       module: "ultralytics.nn.tasks".to_string(),
       name: "DetectionModel".to_string(),
-      args: vec![
-        Value::String("arg0".to_string()),
-        Value::Int(42),
-      ],
+      args: vec![Value::String("arg0".to_string()), Value::Int(42)],
       state: Some(Box::new(Value::Dict(vec![(
         Value::String("training".to_string()),
         Value::Bool(false),

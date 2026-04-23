@@ -54,9 +54,7 @@ fn sample_last_pt_no_longer_fails_on_call_build_state() {
     Err(err) => err,
   };
   assert!(
-    !err
-      .to_string()
-      .contains("BUILD with non-empty state is not supported"),
+    !err.to_string().contains("BUILD with non-empty state is not supported"),
     "regression: parser still fails with unsupported call BUILD state"
   );
 }

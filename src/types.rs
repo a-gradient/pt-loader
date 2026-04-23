@@ -273,6 +273,18 @@ impl DType {
   }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum NumpyScalarData {
+  F32(f32),
+  F64(f64),
+  I8(i8),
+  I16(i16),
+  I32(i32),
+  I64(i64),
+  U8(u8),
+  Bool(bool),
+}
+
 #[derive(Debug, Clone)]
 pub struct StorageRef {
   pub key: String,
@@ -316,6 +328,11 @@ pub enum Value {
   StorageRef(StorageRef),
   TensorRef(TensorRef),
   OrderedDict(Vec<(String, Value)>),
+  NumpyScalar {
+    dtype: DType,
+    shape: Vec<usize>,
+    data: NumpyScalarData,
+  },
   Call {
     func: String,
     args: Vec<Value>,

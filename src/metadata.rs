@@ -1,5 +1,5 @@
 use crate::extract::key_as_string;
-use crate::types::Value;
+use crate::types::{NumpyScalarData, Value};
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
   let mut out = String::with_capacity(bytes.len() * 2);
@@ -39,6 +39,29 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
         .iter()
         .map(|(k, v)| (serde_yaml::Value::String(k.clone()), project_value_for_metadata(v)))
         .collect(),
+    ),
+    Value::NumpyScalar { dtype, shape, data } => serde_yaml::Value::Mapping(
+      [
+        (
+          serde_yaml::Value::String("dtype".to_string()),
+          serde_yaml::Value::String(dtype.as_safetensors().to_string()),
+        ),
+        (
+          serde_yaml::Value::String("shape".to_string()),
+          serde_yaml::Value::Sequence(
+            shape
+              .iter()
+              .map(|v| serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::Null))
+              .collect(),
+          ),
+        ),
+        (
+          serde_yaml::Value::String("data".to_string()),
+          project_numpy_scalar_data(data),
+        ),
+      ]
+      .into_iter()
+      .collect(),
     ),
     Value::Global { module, name } => serde_yaml::Value::String(format!("{module}.{name}")),
     Value::StorageRef(storage) => serde_yaml::Value::Mapping(
@@ -171,6 +194,19 @@ fn is_empty_args(args: &[Value]) -> bool {
   args.is_empty()
 }
 
+fn project_numpy_scalar_data(data: &NumpyScalarData) -> serde_yaml::Value {
+  match data {
+    NumpyScalarData::F32(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::F64(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::I8(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::I16(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::I32(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::I64(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::U8(v) => serde_yaml::to_value(*v).unwrap_or(serde_yaml::Value::String(v.to_string())),
+    NumpyScalarData::Bool(v) => serde_yaml::Value::Bool(*v),
+  }
+}
+
 pub(crate) fn collect_constructor_types(root: &Value) -> Vec<String> {
   let mut seen = std::collections::BTreeSet::new();
   let mut out = Vec::new();
@@ -274,5 +310,60 @@ fn collect_call_types_inner(value: &Value, seen: &mut std::collections::BTreeSet
       }
     }
     _ => {}
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::types::DType;
+
+  #[test]
+  fn projects_recovered_numpy_scalar_metadata() {
+    let value = Value::NumpyScalar {
+      dtype: DType::F32,
+      shape: Vec::new(),
+      data: NumpyScalarData::F32(3.5),
+    };
+
+    let projected = project_value_for_metadata(&value);
+    let serde_yaml::Value::Mapping(map) = projected else {
+      panic!("expected mapping");
+    };
+
+    assert_eq!(
+      map.get(serde_yaml::Value::String("dtype".to_string())),
+      Some(&serde_yaml::Value::String("F32".to_string()))
+    );
+    assert_eq!(
+      map.get(serde_yaml::Value::String("shape".to_string())),
+      Some(&serde_yaml::Value::Sequence(Vec::new()))
+    );
+    assert_eq!(
+      map.get(serde_yaml::Value::String("data".to_string())),
+      Some(&serde_yaml::to_value(3.5f32).expect("f32 value"))
+    );
+  }
+
+  #[test]
+  fn keeps_call_projection_for_unrecognized_calls() {
+    let value = Value::Call {
+      func: "numpy._core.multiarray.scalar".to_string(),
+      args: vec![Value::String("x9".to_string())],
+      state: None,
+    };
+
+    let projected = project_value_for_metadata(&value);
+    let serde_yaml::Value::Mapping(map) = projected else {
+      panic!("expected mapping");
+    };
+    assert_eq!(
+      map.get(serde_yaml::Value::String("$type".to_string())),
+      Some(&serde_yaml::Value::String("call".to_string()))
+    );
+    assert_eq!(
+      map.get(serde_yaml::Value::String("$func".to_string())),
+      Some(&serde_yaml::Value::String("numpy._core.multiarray.scalar".to_string()))
+    );
   }
 }

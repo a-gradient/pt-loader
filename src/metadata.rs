@@ -1,5 +1,5 @@
 use crate::extract::key_as_string;
-use crate::types::{NumpyScalarData, Value};
+use crate::types::{NumpyEndian, NumpyScalarData, Value};
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
   let mut out = String::with_capacity(bytes.len() * 2);
@@ -40,11 +40,24 @@ pub(crate) fn project_value_for_metadata(value: &Value) -> serde_yaml::Value {
         .map(|(k, v)| (serde_yaml::Value::String(k.clone()), project_value_for_metadata(v)))
         .collect(),
     ),
-    Value::NumpyScalar { dtype, shape, data } => serde_yaml::Value::Mapping(
+    Value::NumpyScalar {
+      dtype,
+      endian,
+      shape,
+      data,
+    } => serde_yaml::Value::Mapping(
       [
+        (
+          serde_yaml::Value::String("$type".to_string()),
+          serde_yaml::Value::String("numpy".to_string()),
+        ),
         (
           serde_yaml::Value::String("dtype".to_string()),
           serde_yaml::Value::String(dtype.as_safetensors().to_string()),
+        ),
+        (
+          serde_yaml::Value::String("endian".to_string()),
+          project_numpy_endian(*endian),
         ),
         (
           serde_yaml::Value::String("shape".to_string()),
@@ -207,6 +220,16 @@ fn project_numpy_scalar_data(data: &NumpyScalarData) -> serde_yaml::Value {
   }
 }
 
+fn project_numpy_endian(endian: NumpyEndian) -> serde_yaml::Value {
+  match endian {
+    NumpyEndian::NotApplicable => serde_yaml::Value::String("|".to_string()),
+    NumpyEndian::Little => serde_yaml::Value::String("<".to_string()),
+    NumpyEndian::Big => serde_yaml::Value::String(">".to_string()),
+    NumpyEndian::Native => serde_yaml::Value::String("=".to_string()),
+    NumpyEndian::NotSpecified => serde_yaml::Value::Null,
+  }
+}
+
 pub(crate) fn collect_constructor_types(root: &Value) -> Vec<String> {
   let mut seen = std::collections::BTreeSet::new();
   let mut out = Vec::new();
@@ -316,12 +339,13 @@ fn collect_call_types_inner(value: &Value, seen: &mut std::collections::BTreeSet
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::types::DType;
+  use crate::types::{DType, NumpyEndian};
 
   #[test]
   fn projects_recovered_numpy_scalar_metadata() {
     let value = Value::NumpyScalar {
       dtype: DType::F32,
+      endian: NumpyEndian::Little,
       shape: Vec::new(),
       data: NumpyScalarData::F32(3.5),
     };
@@ -332,8 +356,16 @@ mod tests {
     };
 
     assert_eq!(
+      map.get(serde_yaml::Value::String("$type".to_string())),
+      Some(&serde_yaml::Value::String("numpy".to_string()))
+    );
+    assert_eq!(
       map.get(serde_yaml::Value::String("dtype".to_string())),
       Some(&serde_yaml::Value::String("F32".to_string()))
+    );
+    assert_eq!(
+      map.get(serde_yaml::Value::String("endian".to_string())),
+      Some(&serde_yaml::Value::String("<".to_string()))
     );
     assert_eq!(
       map.get(serde_yaml::Value::String("shape".to_string())),
@@ -365,5 +397,33 @@ mod tests {
       map.get(serde_yaml::Value::String("$func".to_string())),
       Some(&serde_yaml::Value::String("numpy._core.multiarray.scalar".to_string()))
     );
+  }
+
+  #[test]
+  fn projects_numpy_endian_symbols() {
+    let cases = [
+      (NumpyEndian::NotApplicable, serde_yaml::Value::String("|".to_string())),
+      (NumpyEndian::Little, serde_yaml::Value::String("<".to_string())),
+      (NumpyEndian::Big, serde_yaml::Value::String(">".to_string())),
+      (NumpyEndian::Native, serde_yaml::Value::String("=".to_string())),
+      (NumpyEndian::NotSpecified, serde_yaml::Value::Null),
+    ];
+
+    for (endian, expected) in cases {
+      let value = Value::NumpyScalar {
+        dtype: DType::F64,
+        endian,
+        shape: Vec::new(),
+        data: NumpyScalarData::F64(1.0),
+      };
+      let projected = project_value_for_metadata(&value);
+      let serde_yaml::Value::Mapping(map) = projected else {
+        panic!("expected mapping");
+      };
+      assert_eq!(
+        map.get(serde_yaml::Value::String("endian".to_string())),
+        Some(&expected)
+      );
+    }
   }
 }

@@ -9,8 +9,8 @@ pub mod writer;
 
 pub use types::{
   CheckpointMetadata, CheckpointSecurity, CheckpointTensorMetadata, ConvertError, DType, ExportFormat, ExportOptions,
-  ExportResult, LoadOptions, NumpyScalarData, ReconstructSource, Result, StorageRef, TensorArray, TensorData,
-  TensorManifest, TensorRef, Value,
+  ExportResult, LoadOptions, NumpyEndian, NumpyScalarData, ReconstructSource, Result, StorageRef, TensorArray,
+  TensorData, TensorManifest, TensorRef, Value,
 };
 
 use ndarray::{ArrayD, IxDyn};
@@ -118,7 +118,7 @@ impl PtCheckpoint {
     fs::create_dir_all(out_dir)?;
 
     let is_multi_root = self.tensor_groups.len() > 1 || !self.tensor_groups.contains_key("root");
-    let weights_path = out_dir.join(&opts.weights_filename);
+    let mut weights_path = out_dir.join(&opts.weights_filename);
     let mut weights_paths = BTreeMap::new();
     if is_multi_root {
       for (root_key, tensors) in &self.tensor_groups {
@@ -132,6 +132,13 @@ impl PtCheckpoint {
         }
         write_safetensors(&path, tensors, &self.source_sha256)?;
         weights_paths.insert(root_key.clone(), path);
+      }
+      if let Some(preferred) = weights_paths
+        .get("model")
+        .or_else(|| weights_paths.get("root"))
+        .or_else(|| weights_paths.values().next())
+      {
+        weights_path = preferred.clone();
       }
     } else {
       if weights_path.exists() && !opts.overwrite {

@@ -63,11 +63,10 @@ fn test_one_sample(input: &Path, samples_dir: &Path, out_root: &Path) {
       );
     }
   };
+  let mut export_opts = ExportOptions::new(ExportFormat::Safetensors, Some(input));
+  export_opts.overwrite = true;
   let result = checkpoint
-    .export(
-      &sample_out_dir,
-      ExportOptions::new(ExportFormat::Safetensors, Some(input)),
-    )
+    .export(&sample_out_dir, export_opts)
     .unwrap_or_else(|err| panic!("sample checkpoint should convert ({}): {err}", input.display()));
 
   let result_weights_path = result

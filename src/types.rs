@@ -285,6 +285,15 @@ pub enum NumpyScalarData {
   Bool(bool),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumpyEndian {
+  Little,
+  Big,
+  NotApplicable,
+  Native,
+  NotSpecified,
+}
+
 #[derive(Debug, Clone)]
 pub struct StorageRef {
   pub key: String,
@@ -330,6 +339,7 @@ pub enum Value {
   OrderedDict(Vec<(String, Value)>),
   NumpyScalar {
     dtype: DType,
+    endian: NumpyEndian,
     shape: Vec<usize>,
     data: NumpyScalarData,
   },
